@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted } from 'vue'
 import TowerNode from './TowerNode.vue'
 import {
   MODOS,
@@ -15,13 +15,13 @@ const props = defineProps<{
   torres: Torre[]
   pending: Record<number, boolean>
   online: boolean
+  selectedId?: number | null
 }>()
 
 const emit = defineEmits<{
   maintenance: [torre: Torre]
+  selectNode: [id: number | null]
 }>()
-
-const aberto = ref<number | null>(null)
 
 function brilho(t: Torre): number {
   if (t.statusOperacional === 'EM_MANUTENCAO') return 0
@@ -45,7 +45,7 @@ const todasNoMaximo = computed(
 const ativas = computed(() => nos.value.filter((no) => no.opacity > 0).length)
 
 function fechar() {
-  aberto.value = null
+  emit('selectNode', null)
 }
 function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape') fechar()
@@ -116,9 +116,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
         :torre="no.torre"
         :x="no.x"
         :y="no.y"
-        :open="aberto === no.torre.id"
+        :open="selectedId === no.torre.id"
         :pending="pending[no.torre.id]"
-        @toggle="aberto = aberto === no.torre.id ? null : no.torre.id"
+        @toggle="emit('selectNode', selectedId === no.torre.id ? null : no.torre.id)"
         @maintenance="(t) => { fechar(); emit('maintenance', t) }"
       />
     </div>

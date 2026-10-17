@@ -21,6 +21,9 @@ const modo = computed(() => getModo(props.torre.modoIluminacao))
 const ligada = computed(() => !manut.value && modo.value.pwm > 0)
 const color = computed(() => (manut.value ? '#EF4444' : ligada.value ? modo.value.color : '#4B5563'))
 const percent = computed(() => pwmToPercent(props.torre.nivelBrilhoAtual ?? modo.value.pwm))
+const bateria = computed(() =>
+  typeof props.torre.bateria === 'number' ? Math.round(props.torre.bateria) : null,
+)
 
 /** Popover abre para baixo e se alinha pela borda mais próxima */
 const popoverAlign = computed(() => (props.x > 60 ? 'right-0' : props.x < 30 ? 'left-0' : 'left-1/2 -translate-x-1/2'))
@@ -55,8 +58,12 @@ const popoverAlign = computed(() => (props.x > 60 ? 'right-0' : props.x < 30 ? '
 
       <!-- Tag -->
       <span
-        class="rounded border bg-abyss/85 px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wider backdrop-blur-sm transition-colors group-hover:border-ore group-focus-visible:border-ore"
-        :class="open ? 'border-ore text-ink' : 'border-line text-clay'"
+        class="rounded border bg-abyss/85 px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wider backdrop-blur-sm transition-all group-hover:border-ore group-focus-visible:border-ore"
+        :class="
+          open
+            ? 'border-ore bg-ore/20 text-ink shadow-[0_0_12px_rgba(217,119,6,0.5)]'
+            : 'border-line text-clay'
+        "
       >
         {{ torre.codigo }}
         <span v-if="pending" class="ml-0.5 inline-block size-1.5 animate-pulse rounded-full bg-ore align-middle" />
@@ -72,7 +79,7 @@ const popoverAlign = computed(() => (props.x > 60 ? 'right-0' : props.x < 30 ? '
     >
       <div
         v-if="open"
-        class="absolute top-7 w-56 rounded-[10px] border border-line bg-panel/95 p-3 shadow-2xl shadow-black/60 backdrop-blur-md"
+        class="absolute top-7 w-56 rounded-[10px] border border-ore/50 bg-panel/95 p-3 shadow-2xl shadow-black/60 backdrop-blur-md"
         :class="popoverAlign"
         @click.stop
       >
@@ -91,6 +98,15 @@ const popoverAlign = computed(() => (props.x > 60 ? 'right-0' : props.x < 30 ? '
           <dd class="text-right font-medium" :style="{ color: manut ? undefined : modo.color }">{{ modo.label }}</dd>
           <dt class="text-mute">PWM</dt>
           <dd class="text-right font-mono tabular-nums text-ink">{{ torre.nivelBrilhoAtual ?? 0 }}/255</dd>
+          <template v-if="bateria !== null">
+            <dt class="text-mute">Bateria (UPS)</dt>
+            <dd
+              class="text-right font-mono tabular-nums"
+              :class="bateria < 30 ? 'text-fault' : bateria < 60 ? 'text-ore' : 'text-ok'"
+            >
+              {{ bateria }}%
+            </dd>
+          </template>
           <dt class="text-mute">Pino Arduino</dt>
           <dd class="text-right font-mono text-ink">D{{ torre.pinoPwm }}</dd>
           <dt class="text-mute">Setor</dt>

@@ -1,4 +1,6 @@
 import { REQUEST_TIMEOUT_MS } from '@/config/scada'
+import { mockBackend } from '@/services/mockBackend'
+import { autoFallback, simulacao } from '@/services/simulacao'
 import type {
   ModoIluminacao,
   NovaOrdemManutencao,
@@ -51,24 +53,58 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = REQU
   }
 }
 
+/**
+ * Executa a chamada real; se estiver em Modo Simulação (ou se a chamada real
+ * falhar e o autoFallback estiver habilitado), delega para o mockBackend local.
+ */
+async function withSimulacao<T>(realFn: () => Promise<T>, mockFn: () => Promise<T>): Promise<T> {
+  if (simulacao.value) {
+    return mockFn()
+  }
+  try {
+    return await realFn()
+  } catch (err) {
+    if (autoFallback.value) {
+      simulacao.value = true
+      return mockFn()
+    }
+    throw err
+  }
+}
+
 export const torresApi = {
-  listar: () => request<Torre[]>('/torres'),
+  listar: () =>
+    withSimulacao(
+      () => request<Torre[]>('/torres'),
+      () => mockBackend.listarTorres(),
+    ),
 
   /**
    * Corpo segue os nomes de campo da entidade Torre, para binding direto
    * com @RequestBody no Spring Boot.
    */
   alterarModo: (id: number, modoIluminacao: ModoIluminacao, nivelBrilhoAtual: number) =>
-    request<Torre>(
-      `/torres/${id}/modo`,
-      { method: 'PUT', body: JSON.stringify({ modoIluminacao, nivelBrilhoAtual }) },
-      4000,
+    withSimulacao(
+      () =>
+        request<Torre>(
+          `/torres/${id}/modo`,
+          { method: 'PUT', body: JSON.stringify({ modoIluminacao, nivelBrilhoAtual }) },
+          4000,
+        ),
+      () => mockBackend.alterarModo(id, modoIluminacao, nivelBrilhoAtual),
     ),
 }
 
 export const manutencaoApi = {
-  pendentes: () => request<OrdemManutencao[]>('/manutencao/pendentes', {}, 4000),
+  pendentes: () =>
+    withSimulacao(
+      () => request<OrdemManutencao[]>('/manutencao/pendentes', {}, 4000),
+      () => mockBackend.pendentes(),
+    ),
 
   abrir: (ordem: NovaOrdemManutencao) =>
-    request<OrdemManutencao>('/manutencao', { method: 'POST', body: JSON.stringify(ordem) }, 4000),
+    withSimulacao(
+      () => request<OrdemManutencao>('/manutencao', { method: 'POST', body: JSON.stringify(ordem) }, 4000),
+      () => mockBackend.abrirOrdem(ordem),
+    ),
 }

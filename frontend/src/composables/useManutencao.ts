@@ -1,6 +1,7 @@
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { POLL_MANUTENCAO_MS } from '@/config/scada'
 import { manutencaoApi } from '@/services/api'
+import { simulacao } from '@/services/simulacao'
 import type { NovaOrdemManutencao, OrdemManutencao } from '@/types/scada'
 
 export function useManutencao() {
@@ -36,6 +37,10 @@ export function useManutencao() {
       enviando.value = false
     }
   }
+
+  watch(simulacao, () => {
+    carregar()
+  })
 
   onMounted(() => {
     carregar()

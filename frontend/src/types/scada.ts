@@ -17,6 +17,7 @@ export interface Torre {
   modoIluminacao: ModoIluminacao
   nivelBrilhoAtual: number // 0..255
   statusOperacional: StatusOperacional
+  bateria?: number // % de carga do nobreak (simulação / telemetria estendida)
   setor?: Setor | null
 }
 

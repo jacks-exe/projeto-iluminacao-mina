@@ -12,21 +12,27 @@ const {
   torres,
   connection,
   isOnline,
+  simulacao,
   lastSync,
   pending,
   lastError,
   cerracaoGeralAtiva,
   setModo,
   toggleCerracaoGeral,
+  toggleSimulacao,
+  resetSimulacao,
 } = useTorres()
 
 const maintenancePanel = ref<InstanceType<typeof MaintenancePanel> | null>(null)
+const selectedTowerId = ref<number | null>(null)
 
 function onSelect(torre: Torre, modo: ModoIluminacao) {
+  selectedTowerId.value = torre.id
   setModo(torre, modo)
 }
 
 function onMaintenance(torre: Torre) {
+  selectedTowerId.value = torre.id
   maintenancePanel.value?.abrirPara(torre)
 }
 
@@ -46,7 +52,13 @@ watch(lastError, (msg) => {
 
 <template>
   <div class="flex h-full min-h-[720px] flex-col bg-abyss">
-    <DashboardHeader :connection="connection" :last-sync="lastSync" />
+    <DashboardHeader
+      :connection="connection"
+      :last-sync="lastSync"
+      :simulacao="simulacao"
+      @toggle-simulacao="toggleSimulacao"
+      @reset-simulacao="resetSimulacao"
+    />
 
     <main class="grid min-h-0 flex-1 grid-cols-[320px_minmax(0,1fr)] gap-3 p-3">
       <!-- Lateral esquerda -->
@@ -61,6 +73,8 @@ watch(lastError, (msg) => {
           :torres="torres"
           :pending="pending"
           :online="isOnline"
+          :selected-id="selectedTowerId"
+          @select-node="(id) => (selectedTowerId = id)"
           @maintenance="onMaintenance"
         />
         <ControlDock
@@ -68,6 +82,7 @@ watch(lastError, (msg) => {
           :pending="pending"
           :online="isOnline"
           :cerracao-ativa="cerracaoGeralAtiva"
+          :selected-id="selectedTowerId"
           @select="onSelect"
           @cerracao="toggleCerracaoGeral"
         />

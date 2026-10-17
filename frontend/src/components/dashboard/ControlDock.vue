@@ -7,6 +7,7 @@ defineProps<{
   pending: Record<number, boolean>
   online: boolean
   cerracaoAtiva: boolean
+  selectedId?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -28,6 +29,7 @@ const emit = defineEmits<{
           :key="t.id"
           :torre="t"
           :pending="pending[t.id]"
+          :highlighted="selectedId === t.id"
           :disabled="!online || t.id < 0"
           @select="(m) => emit('select', t, m)"
         />

@@ -6,14 +6,26 @@ import type { ConnectionState } from '@/types/scada'
 const props = defineProps<{
   connection: ConnectionState
   lastSync: Date | null
+  simulacao?: boolean
+}>()
+
+const emit = defineEmits<{
+  toggleSimulacao: []
+  resetSimulacao: []
 }>()
 
 const { hora, data } = useClock()
 
 const status = computed(() => {
+  if (props.simulacao || props.connection === 'online') {
+    return {
+      label: 'Conexão: Online',
+      dot: 'bg-ok',
+      ring: 'bg-ok',
+      chip: 'border-ok/30 bg-ok/10 text-ok',
+    }
+  }
   switch (props.connection) {
-    case 'online':
-      return { label: 'Conexão: Online', dot: 'bg-ok', ring: 'bg-ok', chip: 'border-ok/30 bg-ok/10 text-ok' }
     case 'offline':
       return { label: 'Conexão: Offline', dot: 'bg-fault', ring: '', chip: 'border-fault/30 bg-fault/10 text-fault' }
     default:
@@ -51,10 +63,39 @@ const syncLabel = computed(() =>
     </div>
 
     <!-- Status + relógio -->
-    <div class="flex items-center gap-5">
-      <div class="hidden items-center gap-2 font-mono text-[11px] text-mute md:flex">
+    <div class="flex items-center gap-4">
+      <div class="hidden items-center gap-2 font-mono text-[11px] text-mute lg:flex">
         <span class="scada-label !tracking-[0.14em]">Últ. sync</span>
         <span class="tabular-nums text-ink/80">{{ syncLabel }}</span>
+      </div>
+
+      <!-- Toggle discreto do Modo Simulação / Demo -->
+      <div class="flex items-center gap-1">
+        <button
+          type="button"
+          class="flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-wider transition-all"
+          :class="
+            simulacao
+              ? 'border-ore/50 bg-ore/15 text-ore shadow-[0_0_12px_-3px_rgba(217,119,6,0.45)]'
+              : 'border-line bg-panel-2 text-mute hover:border-clay hover:text-ink'
+          "
+          :aria-pressed="simulacao"
+          title="Alternar Modo Simulação (Mock Local vs Backend Spring Boot)"
+          @click="emit('toggleSimulacao')"
+        >
+          <span class="size-1.5 rounded-full" :class="simulacao ? 'bg-ore animate-pulse' : 'bg-mute/50'" />
+          {{ simulacao ? 'Modo Simulação' : 'Modo Real' }}
+        </button>
+
+        <button
+          v-if="simulacao"
+          type="button"
+          class="rounded-full border border-line bg-panel-2 px-2 py-1 font-mono text-[10px] text-mute transition-colors hover:border-ore/50 hover:text-ink"
+          title="Restaurar estado inicial da simulação"
+          @click="emit('resetSimulacao')"
+        >
+          Reset
+        </button>
       </div>
 
       <div

@@ -6,6 +6,8 @@ import {
   getModo,
 } from '@/config/scada'
 import { torresApi } from '@/services/api'
+import { mockBackend } from '@/services/mockBackend'
+import { setSimulacaoManual, simulacao } from '@/services/simulacao'
 import type { ConnectionState, ModoIluminacao, Torre } from '@/types/scada'
 
 /* --------------------------------------------------------------------------
@@ -13,7 +15,7 @@ import type { ConnectionState, ModoIluminacao, Torre } from '@/types/scada'
    para todos os componentes do Dashboard.
    -------------------------------------------------------------------------- */
 const torres = ref<Torre[]>([])
-const connection = ref<ConnectionState>('connecting')
+const connection = ref<ConnectionState>(simulacao.value ? 'online' : 'connecting')
 const lastSync = ref<Date | null>(null)
 const pending = ref<Record<number, boolean>>({})
 const lastError = ref<string | null>(null)
@@ -42,6 +44,10 @@ const placeholders: Torre[] = Array.from({ length: TOTAL_TORRES }, (_, i) => ({
 }))
 
 async function poll() {
+  if (timer) {
+    clearTimeout(timer)
+    timer = null
+  }
   try {
     const data = await torresApi.listar()
     const incoming = Array.isArray(data) ? data : []
@@ -81,7 +87,7 @@ function patchLocal(id: number, patch: Partial<Torre>) {
 
 /** Aplica modo em uma torre. Retorna false se bloqueado/falhou. */
 async function setModo(torre: Torre, modo: ModoIluminacao): Promise<boolean> {
-  if (torre.id < 0 || connection.value !== 'online') {
+  if (torre.id < 0 || (connection.value !== 'online' && !simulacao.value)) {
     lastError.value = 'Sem conexão com o controlador.'
     return false
   }
@@ -130,6 +136,26 @@ async function toggleCerracaoGeral() {
   }
 }
 
+/** Alterna o Modo Simulação manualmente e ressincroniza imediatamente. */
+async function toggleSimulacao() {
+  const proximo = !simulacao.value
+  setSimulacaoManual(proximo)
+  if (proximo) {
+    connection.value = 'online'
+  } else {
+    connection.value = 'connecting'
+    failures = 0
+  }
+  await poll()
+}
+
+async function resetSimulacao() {
+  mockBackend.reset()
+  cerracaoGeralAtiva.value = false
+  snapshotPreCerracao = {}
+  await poll()
+}
+
 export function useTorres() {
   onMounted(() => {
     subscribers++
@@ -141,18 +167,21 @@ export function useTorres() {
   })
 
   const lista = computed(() => (torres.value.length ? torres.value : placeholders))
-  const isOnline = computed(() => connection.value === 'online')
+  const isOnline = computed(() => connection.value === 'online' || simulacao.value)
 
   return {
     torres: lista,
     connection,
     isOnline,
+    simulacao,
     lastSync,
     pending,
     lastError,
     cerracaoGeralAtiva,
     setModo,
     toggleCerracaoGeral,
+    toggleSimulacao,
+    resetSimulacao,
     refresh: poll,
   }
 }
