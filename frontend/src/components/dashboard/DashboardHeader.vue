@@ -41,24 +41,21 @@ const syncLabel = computed(() =>
 </script>
 
 <template>
-  <header class="flex h-14 shrink-0 items-center justify-between border-b border-line bg-panel px-4">
+  <header class="flex shrink-0 items-center justify-between border-b border-line bg-panel px-4 py-3.5 lg:px-6">
     <!-- Marca -->
-    <div class="flex items-center gap-3">
-      <div
-        class="grid size-9 place-items-center rounded-lg border border-ore/40 bg-gradient-to-br from-ore/25 to-ember/10 shadow-[0_0_18px_-4px_rgba(217,119,6,0.55)]"
-      >
-        <svg viewBox="0 0 24 24" class="size-5 text-ore" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-          <path d="M12 2v3M5.6 5.6l2.1 2.1M18.4 5.6l-2.1 2.1" stroke-linecap="round" />
-          <path d="M8 13a4 4 0 1 1 8 0c0 1.6-.8 2.5-1.5 3.3-.4.5-.5 1-.5 1.7h-4c0-.7-.1-1.2-.5-1.7C8.8 15.5 8 14.6 8 13Z" />
-          <path d="M10 21h4" stroke-linecap="round" />
-        </svg>
-      </div>
-      <div class="leading-tight">
-        <h1 class="text-[15px] font-semibold tracking-wide text-ink">
-          MINA<span class="text-ore">·</span>IoT
-          <span class="ml-1 font-normal text-mute">Controle de Iluminação</span>
+    <div class="flex items-center gap-4">
+      <img
+        src="/assets/geonex-symbol.svg"
+        alt="GEONEX"
+        class="h-12 w-auto select-none object-contain sm:h-14"
+      />
+      <div class="flex flex-col justify-center">
+        <h1 class="text-2xl font-black tracking-wider text-ink leading-none">
+          GEONE<span class="text-ore">X</span>
         </h1>
-        <p class="scada-label !text-[9px] !tracking-[0.22em] text-clay/80">SCADA · Cava Principal · Arduino PWM</p>
+        <p class="mt-1 text-[11px] font-semibold tracking-[0.25em] text-gray-400">
+          MINING LIGHTING CONTROL
+        </p>
       </div>
     </div>
 
