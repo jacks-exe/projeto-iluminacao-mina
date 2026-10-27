@@ -1,0 +1,6 @@
+com\iluminacao\controller\AuthController.class
+com\iluminacao\dto\LoginRequest.class
+com\iluminacao\Main.class
+com\iluminacao\config\CorsConfig.class
+com\iluminacao\model\Setor.class
+com\iluminacao\model\Torre.class
