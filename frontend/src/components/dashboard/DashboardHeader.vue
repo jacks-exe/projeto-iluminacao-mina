@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { currentPermissions, currentUser, getCurrentUser, logoutSession } from '@/config/auth'
+import { ICONES, NAV_ITEMS, type NavId } from '@/config/navegacao'
 import { POTENCIA_NOMINAL_W, PWM_MAX, getModo } from '@/config/scada'
+import SlidingTabs from '@/components/ui/SlidingTabs.vue'
 import { useClock } from '@/composables/useClock'
 import type { ConnectionState, Torre } from '@/types/scada'
 
@@ -11,13 +13,11 @@ const props = defineProps<{
   lastSync: Date | null
   simulacao?: boolean
   torres?: Torre[]
+  /** Aba ativa no painel */
+  activeId: NavId
 }>()
 
-const emit = defineEmits<{
-  toggleSimulacao: []
-  resetSimulacao: []
-  abrirAnalytics: []
-}>()
+const emit = defineEmits<{ navigate: [id: NavId] }>()
 
 const router = useRouter()
 const { hora, data } = useClock()
@@ -25,7 +25,15 @@ const { hora, data } = useClock()
 const usuarioLogado = computed(() => currentUser.value ?? getCurrentUser())
 const permissoes = computed(() => currentPermissions.value)
 
-async function handleLogout() {
+/* Estado do Modal Dark Mode de Confirmação de Logout */
+const mostrarConfirmacaoLogout = ref(false)
+
+function solicitarLogout() {
+  mostrarConfirmacaoLogout.value = true
+}
+
+async function confirmarLogout() {
+  mostrarConfirmacaoLogout.value = false
   try {
     await fetch('/api/auth/logout', { method: 'POST' })
   } catch {
@@ -59,31 +67,41 @@ const kpiResumo = computed(() => {
 })
 
 const status = computed(() => {
-  if (props.simulacao || props.connection === 'online') {
+  if (props.connection === 'online') {
     return {
       label: 'Conexão: Online',
       dot: 'bg-ok',
       ring: 'bg-ok',
-      chip: 'border-ok/30 bg-ok/10 text-ok',
+      chip: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-400',
     }
   }
   switch (props.connection) {
     case 'offline':
-      return { label: 'Conexão: Offline', dot: 'bg-fault', ring: '', chip: 'border-fault/30 bg-fault/10 text-fault' }
+      return {
+        label: 'Conexão: Offline',
+        dot: 'bg-fault',
+        ring: '',
+        chip: 'border-rose-500/30 bg-rose-500/10 text-rose-500',
+      }
     default:
-      return { label: 'Conectando…', dot: 'bg-ore', ring: 'bg-ore', chip: 'border-ore/30 bg-ore/10 text-ore' }
+      return {
+        label: 'Conectando…',
+        dot: 'bg-ore',
+        ring: 'bg-ore',
+        chip: 'border-ore/30 bg-ore/10 text-ore',
+      }
   }
 })
 
-const syncLabel = computed(() =>
-  props.lastSync
-    ? props.lastSync.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    : '--:--:--',
+/* Abas em pílula: Visão Geral, Ordens de Serviço, Configurações e Analytics (filtradas por perfil RBAC) */
+const ORDEM_ABAS: NavId[] = ['visao', 'os', 'config', 'analytics']
+const abas = computed(() =>
+  ORDEM_ABAS.map((id) => NAV_ITEMS.find((i) => i.id === id)!).filter((i) => i.roles.includes(usuarioLogado.value.role)),
 )
 </script>
 
 <template>
-  <header class="flex shrink-0 items-center justify-between border-b border-line bg-panel px-4 py-3 lg:px-6">
+  <header class="flex shrink-0 items-center justify-between border-b border-white/5 bg-abyss px-4 py-4 lg:px-6">
     <!-- Marca -->
     <div class="flex items-center gap-4">
       <img
@@ -95,69 +113,34 @@ const syncLabel = computed(() =>
         <h1 class="text-2xl font-black tracking-wider text-ink leading-none">
           GEONE<span class="text-ore">X</span>
         </h1>
-        <p class="mt-1 text-[10px] font-semibold tracking-[0.22em] text-gray-400">
+        <p class="mt-1 text-[10px] font-semibold tracking-[0.22em] text-neutral-500">
           MINING LIGHTING CONTROL · MEGA PWM 2–6
         </p>
       </div>
     </div>
 
-    <!-- KPIs de Desempenho + Botão Analytics + Status + Perfil RBAC + Botão Sair -->
+    <!-- Abas em pílula -->
+    <SlidingTabs
+      aria-label="Seções do painel"
+      container-class="rounded-full bg-white/[0.04] p-1 ring-1 ring-inset ring-white/5"
+      :items="abas.map((a) => ({ id: a.id, label: a.label }))"
+      :model-value="activeId"
+      @update:model-value="(id) => emit('navigate', id)"
+    />
+
+    <!-- KPIs de Desempenho + Status + Perfil RBAC + Botão Sair -->
     <div class="flex items-center gap-3">
       <!-- Indicadores KPI de Desempenho em Tempo Real -->
-      <div class="hidden 2xl:flex items-center gap-2 rounded-lg border border-line bg-panel-2/70 px-3 py-1 font-mono text-[11px]">
-        <span class="text-mute">SLA: <strong :class="kpiResumo.slaPct >= 80 ? 'text-ok' : 'text-fault'">{{ kpiResumo.slaPct }}%</strong></span>
+      <div class="hidden 2xl:flex items-center gap-2 rounded-full border border-white/5 bg-panel px-4 py-1.5 text-[11px]">
+        <span class="text-mute">SLA: <strong class="font-mono" :class="kpiResumo.slaPct >= 80 ? 'text-emerald-400' : 'text-rose-500'">{{ kpiResumo.slaPct }}%</strong></span>
         <span class="text-line">|</span>
-        <span class="text-mute">Economia: <strong class="text-ok">{{ kpiResumo.eficienciaPct }}%</strong></span>
+        <span class="text-mute">Economia: <strong class="font-mono text-emerald-400">{{ kpiResumo.eficienciaPct }}%</strong></span>
         <span class="text-line">|</span>
-        <span class="text-mute">Demanda: <strong class="text-clay">{{ kpiResumo.cargaW }}W</strong></span>
-      </div>
-
-      <!-- Botão Principal: Analytics & Histórico de Telemetria -->
-      <button
-        type="button"
-        class="flex items-center gap-1.5 rounded-lg border border-ore/60 bg-ore/15 px-3 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wider text-ore transition-all hover:bg-ore hover:text-abyss shadow-[0_0_16px_-4px_rgba(217,119,6,0.5)]"
-        title="Abrir Painel de Histórico de Telemetria, Gráficos de Consumo e Auditoria Operacional"
-        @click="emit('abrirAnalytics')"
-      >
-        <span>📊 Analytics & Histórico</span>
-      </button>
-
-      <div class="hidden items-center gap-2 font-mono text-[11px] text-mute xl:flex">
-        <span class="scada-label !tracking-[0.14em]">Sync</span>
-        <span class="tabular-nums text-ink/80">{{ syncLabel }}</span>
-      </div>
-
-      <!-- Toggle do Modo Simulação / Real (Somente Administrador) -->
-      <div v-if="permissoes.canToggleSimulacao" class="flex items-center gap-1">
-        <button
-          type="button"
-          class="flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-wider transition-all"
-          :class="
-            simulacao
-              ? 'border-ore/50 bg-ore/15 text-ore shadow-[0_0_12px_-3px_rgba(217,119,6,0.45)]'
-              : 'border-line bg-panel-2 text-mute hover:border-clay hover:text-ink'
-          "
-          :aria-pressed="simulacao"
-          title="Alternar Modo Simulação vs Modo Real (Backend PHP mysqli + Arduino Mega)"
-          @click="emit('toggleSimulacao')"
-        >
-          <span class="size-1.5 rounded-full" :class="simulacao ? 'bg-ore animate-pulse' : 'bg-mute/50'" />
-          {{ simulacao ? 'Modo Simulação' : 'Modo Real' }}
-        </button>
-
-        <button
-          v-if="simulacao"
-          type="button"
-          class="rounded-full border border-line bg-panel-2 px-2 py-1 font-mono text-[10px] text-mute transition-colors hover:border-ore/50 hover:text-ink"
-          title="Restaurar estado inicial da simulação"
-          @click="emit('resetSimulacao')"
-        >
-          Reset
-        </button>
+        <span class="text-mute">Demanda: <strong class="font-mono text-white">{{ kpiResumo.cargaW }}W</strong></span>
       </div>
 
       <div
-        class="flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium"
+        class="flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs font-medium"
         :class="status.chip"
         role="status"
         aria-live="polite"
@@ -173,39 +156,92 @@ const syncLabel = computed(() =>
 
       <!-- Identificação do Usuário Logado e Nível de Acesso (RBAC) -->
       <div
-        class="flex items-center gap-2.5 rounded-lg border border-line bg-panel-2/80 px-3 py-1.5"
+        class="flex items-center gap-2.5 rounded-full border border-white/5 bg-panel py-1.5 px-4"
         :title="permissoes.descricao"
       >
         <div class="flex flex-col text-right leading-tight">
           <span class="text-xs font-bold text-ink">{{ usuarioLogado.nome }}</span>
           <span
-            class="mt-0.5 inline-flex items-center justify-end gap-1 rounded border px-1.5 py-px font-mono text-[9px] font-bold uppercase tracking-wider"
+            class="mt-0.5 inline-flex items-center justify-end gap-1 rounded-full border px-2 py-px text-[9px] font-bold uppercase tracking-wider"
             :class="permissoes.badgeColor"
           >
             {{ permissoes.label }}
           </span>
         </div>
-
-        <!-- Botão de Sair (Logout com redirecionamento obrigatório para /login) -->
-        <button
-          type="button"
-          class="ml-1 flex items-center gap-1.5 rounded-md border border-fault/50 bg-fault/15 px-2.5 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wider text-fault transition-all hover:bg-fault hover:text-white active:scale-95"
-          title="Encerrar sessão atual e retornar à tela de login"
-          @click="handleLogout"
-        >
-          <svg class="size-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-          </svg>
-          <span>Sair</span>
-        </button>
       </div>
 
       <div class="hidden sm:block h-8 w-px bg-line" />
 
       <div class="hidden sm:block text-right leading-tight">
-        <div class="font-mono text-lg font-semibold tabular-nums text-ink">{{ hora }}</div>
+        <div class="font-mono text-lg font-bold tabular-nums text-white">{{ hora }}</div>
         <div class="text-[10px] uppercase tracking-wider text-mute">{{ data }}</div>
       </div>
+
+      <!-- Sair: ícone minimalista com popup de confirmação -->
+      <button
+        type="button"
+        class="flex size-9 items-center justify-center rounded-full text-neutral-500 transition-colors hover:bg-rose-500/10 hover:text-rose-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 active:scale-95"
+        title="Sair"
+        aria-label="Sair"
+        @click="solicitarLogout"
+      >
+        <svg class="size-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" :d="ICONES.logout" />
+        </svg>
+      </button>
     </div>
+
+    <!-- Modal Dark Mode de Confirmação de Logout -->
+    <Teleport to="body">
+      <Transition
+        enter-active-class="transition duration-150 ease-out"
+        enter-from-class="opacity-0"
+        leave-active-class="transition duration-100 ease-in"
+        leave-to-class="opacity-0"
+      >
+        <div
+          v-if="mostrarConfirmacaoLogout"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="logout-modal-title"
+          @click.self="mostrarConfirmacaoLogout = false"
+        >
+          <div class="w-full max-w-sm rounded-2xl border border-white/10 bg-panel p-5 shadow-2xl shadow-black/90">
+            <div class="flex items-center gap-2.5">
+              <span class="flex size-8 items-center justify-center rounded-full border border-fault/40 bg-fault/15 text-fault">
+                <svg class="size-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" :d="ICONES.logout" />
+                </svg>
+              </span>
+              <h3 id="logout-modal-title" class="text-sm font-bold text-ink">
+                Confirmar saída do sistema
+              </h3>
+            </div>
+
+            <p class="mt-3 text-xs leading-relaxed text-mute">
+              Deseja realmente encerrar sua sessão atual (<strong class="text-ink">{{ usuarioLogado.nome }}</strong>) e sair do painel GEONEX SCADA?
+            </p>
+
+            <div class="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                class="rounded-xl border border-line bg-panel-2 px-4 py-2 text-xs font-semibold text-mute transition-colors hover:text-ink"
+                @click="mostrarConfirmacaoLogout = false"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                class="rounded-xl bg-fault px-4 py-2 text-xs font-bold text-white transition-opacity hover:opacity-90"
+                @click="confirmarLogout"
+              >
+                Sim, sair
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </header>
 </template>

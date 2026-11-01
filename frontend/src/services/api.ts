@@ -1,4 +1,5 @@
-import { getCurrentUser } from '@/config/auth'
+import { ref } from 'vue'
+import { getCurrentUser, type AuthUser, type UserRole } from '@/config/auth'
 import { PINOS_POSTES, REQUEST_TIMEOUT_MS, calcularConsumoW, clampPwm, modoPorPwm } from '@/config/scada'
 import { mockBackend } from '@/services/mockBackend'
 import { autoFallback, simulacao } from '@/services/simulacao'
@@ -11,26 +12,29 @@ import type {
   Torre,
 } from '@/types/scada'
 
-/** URL do Backend PHP Procedural (mysqli) - Passo 3 */
+/** URL do Backend PHP Procedural (mysqli) */
 export const PHP_API_BASE_URL =
   (import.meta.env.VITE_PHP_API_URL as string | undefined) ?? 'http://localhost:8000'
 
 /** Endpoint PHP separado exclusivamente para envio de comandos seriais no clique (POST) */
 const PHP_COMANDO_SERIAL_URL = `${PHP_API_BASE_URL}/comando_serial.php`
 
-/** Fallback direto para a Ponte Serial local (115200 bps) caso o front esteja em Modo Simulação */
+/** Endpoint da Ponte Serial local (115200 bps) */
 const PONTE_IOT_EVENTO_URL = 'http://127.0.0.1:5005/evento'
+
+/** Estado reativo indicando se o hardware físico do Arduino está online via Serial/Heartbeat */
+export const arduinoFisicoOnline = ref<boolean>(false)
 
 /**
  * Envia o comando para a porta serial de forma INSTANTÂNEA (< 5ms) no momento do clique,
- * comunicando-se prioritariamente com a Ponte Local Python (porta 5005) sem passar
- * por gargalos do PHP em fila única.
+ * comunicando-se prioritariamente com a Ponte Local Python (porta 5005) e validando bloqueio de manutenção.
  */
 function enviarComandoSerialPorEvento(dados: {
   acao: string
   id?: number
   pwm?: number
   conectado?: boolean
+  em_manutencao?: boolean
   bateria?: number
   ldr?: number
   comando: string
@@ -40,31 +44,37 @@ function enviarComandoSerialPorEvento(dados: {
     acao: dados.acao,
     id: dados.id,
     pwm: dados.pwm,
+    em_manutencao: dados.em_manutencao,
     bateria: dados.bateria,
     ldr: dados.ldr,
   }
 
-  // 1. Envio de ultra-baixa latência diretamente para a Ponte IoT (115200 bps)
   fetch(PONTE_IOT_EVENTO_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payloadDireto),
-  }).catch(() => {
-    // 2. Fallback via PHP caso o endpoint 5005 não esteja acessível
-    const usr = getCurrentUser()
-    fetch(PHP_COMANDO_SERIAL_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-User-Id': String(usr.id),
-        'X-User-Role': usr.role,
-      },
-      body: JSON.stringify(dados),
-    }).catch(() => undefined)
   })
+    .then(async (r) => {
+      const j = await r.json().catch(() => null)
+      if (j && typeof j.online === 'boolean') {
+        arduinoFisicoOnline.value = j.online
+      }
+    })
+    .catch(() => {
+      arduinoFisicoOnline.value = false
+      const usr = getCurrentUser()
+      fetch(PHP_COMANDO_SERIAL_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': String(usr.id),
+          'X-User-Role': usr.role,
+        },
+        body: JSON.stringify(dados),
+      }).catch(() => undefined)
+    })
 }
 
-/** Em dev o Vite faz proxy de /api -> http://localhost:8080 */
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api'
 
 export class ApiError extends Error {
@@ -101,6 +111,7 @@ async function fetchJson<T>(url: string, init: RequestInit = {}, timeoutMs = REQ
       try {
         const parsed = JSON.parse(text)
         if (parsed?.erro) msg = parsed.erro
+        else if (parsed?.message) msg = parsed.message
       } catch {
         /* ignore */
       }
@@ -126,10 +137,14 @@ function normalizarPoste(raw: any, index = 0): Torre {
   const pinoBruto = Number(raw?.pinoPwm ?? raw?.pino_pwm ?? 0)
   const pinoPwm = pinoBruto >= 2 && pinoBruto <= 6 ? pinoBruto : (PINOS_POSTES[idx] ?? 2 + idx)
 
-  const statusOperacional =
-    String(raw?.statusOperacional ?? raw?.status_operacional ?? 'OPERANDO').toUpperCase() === 'EM_MANUTENCAO'
-      ? 'EM_MANUTENCAO'
-      : 'OPERANDO'
+  const emManutencao = Boolean(
+    raw?.emManutencao === true ||
+      raw?.em_manutencao === true ||
+      Number(raw?.em_manutencao) === 1 ||
+      String(raw?.statusOperacional ?? raw?.status_operacional ?? 'OPERANDO').toUpperCase() === 'EM_MANUTENCAO',
+  )
+
+  const statusOperacional = emManutencao ? 'EM_MANUTENCAO' : 'OPERANDO'
 
   const conectado =
     raw?.conectado !== undefined && raw?.conectado !== null
@@ -137,6 +152,7 @@ function normalizarPoste(raw: any, index = 0): Torre {
       : true
 
   const pwmBruto = Number(raw?.nivelBrilhoAtual ?? raw?.nivel_brilho_atual ?? 0)
+  const pwmAntesManutencao = Number(raw?.pwmAntesManutencao ?? raw?.pwm_antes_manutencao ?? pwmBruto)
   const nivelBrilhoAtual =
     statusOperacional === 'EM_MANUTENCAO' || !conectado ? 0 : clampPwm(pwmBruto)
 
@@ -166,7 +182,11 @@ function normalizarPoste(raw: any, index = 0): Torre {
     pinoPwm,
     modoIluminacao,
     nivelBrilhoAtual,
+    pwmAntesManutencao,
+    pwm_antes_manutencao: pwmAntesManutencao,
     statusOperacional,
+    emManutencao,
+    em_manutencao: emManutencao,
     conectado,
     consumoWatts,
     bateria: typeof raw?.bateria === 'number' ? raw.bateria : Number(raw?.bateria ?? 92),
@@ -176,12 +196,11 @@ function normalizarPoste(raw: any, index = 0): Torre {
   }
 }
 
-/**
- * Executa a chamada prioritariamente na API PHP (`postes.php`);
- * se estiver em Modo Simulação (ou se a API real falhar com autoFallback),
- * delega para o mockBackend local mantendo sincronia silenciosa com o PHP quando disponível.
- */
-async function withSimulacao<T>(realFn: () => Promise<T>, mockFn: () => Promise<T>, syncPhpQuietly?: () => Promise<unknown>): Promise<T> {
+async function withSimulacao<T>(
+  realFn: () => Promise<T>,
+  mockFn: () => Promise<T>,
+  syncPhpQuietly?: () => Promise<unknown>,
+): Promise<T> {
   if (simulacao.value) {
     if (syncPhpQuietly) {
       syncPhpQuietly().catch(() => undefined)
@@ -203,21 +222,28 @@ export const torresApi = {
   listar: () =>
     withSimulacao(
       async () => {
-        try {
-          const res = await fetchJson<any>(`${PHP_API_BASE_URL}/postes.php`)
-          const arr = Array.isArray(res?.dados) ? res.dados : Array.isArray(res) ? res : []
-          return arr.map((item: any, i: number) => normalizarPoste(item, i))
-        } catch {
-          const resSpring = await fetchJson<any[]>(`${BASE_URL}/torres`)
-          return (Array.isArray(resSpring) ? resSpring : []).map((item, i) => normalizarPoste(item, i))
+        const res = await fetchJson<any>(
+          `${PHP_API_BASE_URL}/postes.php${simulacao.value ? '?simulacao=1' : ''}`,
+        )
+        if (typeof res?.arduino_online === 'boolean') {
+          arduinoFisicoOnline.value = res.arduino_online
+        } else {
+          const arrTmp = Array.isArray(res?.dados) ? res.dados : Array.isArray(res) ? res : []
+          arduinoFisicoOnline.value = arrTmp.some(
+            (item: any) => Boolean(Number(item?.conectado) === 1 || item?.conectado === true),
+          )
         }
+        const arr = Array.isArray(res?.dados) ? res.dados : Array.isArray(res) ? res : []
+        return arr.map((item: any, i: number) => normalizarPoste(item, i))
       },
-      () => mockBackend.listarTorres(),
+      async () => {
+        arduinoFisicoOnline.value = true
+        return mockBackend.listarTorres()
+      },
     ),
 
   alterarModo: (id: number, modoIluminacao: ModoIluminacao, nivelBrilhoAtual: number) => {
     const pwmClamped = clampPwm(nivelBrilhoAtual)
-    // Envio por evento via POST para o arquivo separado `comando_serial.php` no momento do clique
     enviarComandoSerialPorEvento({
       acao: 'POSTE',
       id,
@@ -389,19 +415,80 @@ export const analyticsApi = {
     })
     const url = `${PHP_API_BASE_URL}/historico_telemetria.php?${params.toString()}`
 
-    if (!simulacao.value) {
-      try {
-        return await fetchJson<RespostaAnalytics>(url, {}, 3500)
-      } catch {
-        return mockBackend.obterAnalytics(periodo, torreId, origem)
-      }
-    }
-
-    // Em modo simulação, tenta buscar do PHP se estiver rodando; caso contrário usa o mock em tempo real
     try {
-      return await fetchJson<RespostaAnalytics>(url, {}, 1500)
+      return await fetchJson<RespostaAnalytics>(url, {}, 3500)
     } catch {
       return mockBackend.obterAnalytics(periodo, torreId, origem)
     }
+  },
+}
+
+export const usuariosApi = {
+  listar: async (): Promise<AuthUser[]> => {
+    const res = await fetchJson<any>(`${PHP_API_BASE_URL}/usuarios.php`, { method: 'GET' }, 3500)
+    return Array.isArray(res?.dados) ? res.dados : []
+  },
+
+  criar: async (payload: {
+    nome: string
+    username: string
+    role: UserRole
+    password?: string
+    email?: string
+  }): Promise<{ usuario: AuthUser; mensagem: string }> => {
+    const res = await fetchJson<any>(
+      `${PHP_API_BASE_URL}/usuarios.php`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          nome: payload.nome,
+          username: payload.username,
+          role: payload.role,
+          password: payload.password || 'geonex123',
+          email: payload.email,
+          primeiro_acesso: true,
+        }),
+      },
+      4000,
+    )
+    return {
+      usuario: res.dados as AuthUser,
+      mensagem: res.mensagem || 'Usuário criado com sucesso.',
+    }
+  },
+
+  atualizar: async (payload: {
+    id: number
+    nome: string
+    username: string
+    role: UserRole
+    password?: string
+    email?: string
+    primeiro_acesso?: boolean
+  }): Promise<{ usuario: AuthUser; mensagem: string }> => {
+    const res = await fetchJson<any>(
+      `${PHP_API_BASE_URL}/usuarios.php`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+      4000,
+    )
+    return {
+      usuario: res.dados as AuthUser,
+      mensagem: res.mensagem || 'Usuário atualizado com sucesso.',
+    }
+  },
+
+  remover: async (id: number): Promise<string> => {
+    const res = await fetchJson<any>(
+      `${PHP_API_BASE_URL}/usuarios.php?id=${id}`,
+      {
+        method: 'DELETE',
+        body: JSON.stringify({ id }),
+      },
+      4000,
+    )
+    return res?.mensagem || 'Usuário removido com sucesso.'
   },
 }

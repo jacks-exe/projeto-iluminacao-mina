@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { vAutoAnimate } from '@formkit/auto-animate/vue'
 import { currentUser, getCurrentUser } from '@/config/auth'
 import type { PrioridadeOS, Torre } from '@/types/scada'
 
@@ -26,7 +27,6 @@ export interface OrdemServicoItem {
 
 const props = withDefaults(
   defineProps<{
-    aberta: boolean
     torres: Torre[]
     torreInicialId?: number | null
     apiUrl?: string
@@ -43,7 +43,6 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  (e: 'fechar'): void
   (e: 'atualizado'): void
 }>()
 
@@ -99,16 +98,14 @@ watch(
   },
 )
 
-// Sempre que o modal abrir, recarrega os dados direto da API PHP/Docker
-watch(
-  () => props.aberta,
-  (val) => {
-    if (val) {
-      carregarOrdens()
-      if (props.torreInicialId) novaTorreId.value = props.torreInicialId
-    }
-  },
-)
+// Ao entrar na tela, carrega os dados direto da API PHP/Docker (e abre o formulário se vier de uma torre)
+onMounted(() => {
+  carregarOrdens()
+  if (props.torreInicialId) {
+    novaTorreId.value = props.torreInicialId
+    if (podeAbrirOS.value) abaAtiva.value = 'NOVA'
+  }
+})
 
 const ordensFiltradas = computed(() => {
   if (filtroStatus.value === 'TODAS') return ordens.value
@@ -181,19 +178,14 @@ async function criarOrdemServico() {
       throw new Error(json.erro || 'Erro ao registrar O.S.')
     }
 
-    // Sucesso: recarrega a lista do banco, limpa formulário e fecha o modal automaticamente
+    // Sucesso: recarrega a lista do banco, limpa o formulário e volta para a lista
     await carregarOrdens()
     mostrarFeedback('ok', json.mensagem || 'Ordem de Serviço registrada com sucesso.')
-    
+
     novaDescricao.value = ''
     novaPrioridade.value = 'MEDIA'
     abaAtiva.value = 'LISTA'
     emit('atualizado')
-    
-    // Fecha o modal após 1.5s para o usuário ver a mensagem de sucesso
-    setTimeout(() => {
-      emit('fechar')
-    }, 1200)
 
   } catch (err: any) {
     mostrarFeedback('erro', err.message || 'Erro ao salvar O.S. no servidor.')
@@ -285,19 +277,8 @@ function formatarData(iso?: string | null) {
 </script>
 
 <template>
-  <Teleport to="body">
-    <Transition
-      enter-active-class="transition duration-200 ease-out"
-      enter-from-class="opacity-0 scale-95"
-      leave-active-class="transition duration-150 ease-in"
-      leave-to-class="opacity-0 scale-95"
-    >
-      <div
-        v-if="aberta"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
-        @click.self="emit('fechar')"
-      >
-        <div class="scada-card flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden shadow-2xl shadow-black">
+  <section class="flex min-h-0 flex-1 flex-col p-4">
+    <div class="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-[20px] border border-white/5 bg-panel shadow-[0_8px_30px_rgb(0,0,0,0.25)]">
           <!-- Cabeçalho SCADA + Seletor RBAC -->
           <header class="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-panel-2/70 px-5 py-3.5">
             <div>
@@ -315,7 +296,7 @@ function formatarData(iso?: string | null) {
             <!-- Indicador / Seletor RBAC -->
             <div class="flex items-center gap-2">
               <span class="scada-label !text-[9px]">Nível de Acesso Ativo:</span>
-              <div class="flex rounded-md border border-line bg-abyss p-0.5 text-[10px] font-semibold">
+              <div class="flex rounded-xl border border-line bg-abyss p-0.5 text-[10px] font-semibold">
                 <button
                   v-for="r in (['ADMIN', 'OPERADOR', 'TECNICO'] as RoleUsuario[])"
                   :key="r"
@@ -335,14 +316,6 @@ function formatarData(iso?: string | null) {
                   {{ r }}
                 </button>
               </div>
-
-              <button
-                type="button"
-                class="ml-2 rounded-md border border-line px-2.5 py-1 text-xs text-mute hover:border-fault/50 hover:text-fault"
-                @click="emit('fechar')"
-              >
-                ✕
-              </button>
             </div>
           </header>
 
@@ -351,7 +324,7 @@ function formatarData(iso?: string | null) {
             <div class="flex items-center gap-2">
               <button
                 type="button"
-                class="rounded-md px-3 py-1.5 text-xs font-semibold transition-colors"
+                class="rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors"
                 :class="abaAtiva === 'LISTA' ? 'bg-panel-2 text-ink border border-line' : 'text-mute hover:text-ink'"
                 @click="abaAtiva = 'LISTA'; carregarOrdens();"
               >
@@ -361,7 +334,7 @@ function formatarData(iso?: string | null) {
               <button
                 v-if="podeAbrirOS"
                 type="button"
-                class="rounded-md border px-3 py-1.5 text-xs font-semibold transition-colors"
+                class="rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors"
                 :class="
                   abaAtiva === 'NOVA'
                     ? 'border-ore bg-ore text-abyss'
@@ -380,11 +353,11 @@ function formatarData(iso?: string | null) {
               <!-- Botão manual de refresh -->
               <button
                 type="button"
-                class="rounded border border-line bg-panel-2 px-2.5 py-1 text-[11px] text-mute hover:text-ink"
+                class="rounded-lg border border-line bg-panel-2 px-2.5 py-1 text-[11px] text-mute hover:text-ink"
                 :disabled="carregando"
                 @click="carregarOrdens()"
               >
-                {{ carregando ? 'Atualizando...' : '🔄 Atualizar Lista' }}
+                {{ carregando ? 'Atualizando...' : 'Atualizar Lista' }}
               </button>
 
               <!-- Filtro de Status -->
@@ -393,7 +366,7 @@ function formatarData(iso?: string | null) {
                   v-for="st in (['TODAS', 'ABERTA', 'EM_ANDAMENTO', 'CONCLUIDA'] as const)"
                   :key="st"
                   type="button"
-                  class="rounded border px-2 py-0.5 font-mono text-[10px] transition-colors"
+                  class="rounded-lg border px-2 py-0.5 text-[10px] transition-colors"
                   :class="
                     filtroStatus === st
                       ? 'border-ore/60 bg-ore/15 text-ore'
@@ -417,7 +390,7 @@ function formatarData(iso?: string | null) {
           </div>
 
           <!-- LISTA DE CHAMADOS -->
-          <div v-if="abaAtiva === 'LISTA'" class="min-h-0 flex-1 overflow-y-auto divide-y divide-line">
+          <div v-if="abaAtiva === 'LISTA'" v-auto-animate class="min-h-0 flex-1 overflow-y-auto divide-y divide-line">
             <div
               v-for="os in ordensFiltradas"
               :key="os.id"
@@ -426,17 +399,17 @@ function formatarData(iso?: string | null) {
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <div class="flex items-center gap-2.5">
                   <span class="font-mono text-xs font-bold text-ink">OS #{{ os.id }}</span>
-                  <span class="rounded bg-clay/15 px-2 py-0.5 font-mono text-xs font-semibold text-clay">
+                  <span class="rounded bg-clay/15 px-2 py-0.5 text-xs font-semibold text-clay">
                     {{ os.torre_codigo }}
                   </span>
                   <span
-                    class="rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
+                    class="rounded-lg border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
                     :class="badgePrioridade(os.prioridade)"
                   >
                     {{ os.prioridade }}
                   </span>
                   <span
-                    class="rounded border px-2 py-0.5 font-mono text-[10px] font-semibold"
+                    class="rounded-lg border px-2 py-0.5 text-[10px] font-semibold"
                     :class="badgeStatus(os.status)"
                   >
                     {{ os.status }}
@@ -448,7 +421,7 @@ function formatarData(iso?: string | null) {
                   <button
                     v-if="podeAtenderOS && os.status !== 'CONCLUIDA'"
                     type="button"
-                    class="rounded border border-ore/50 bg-ore/10 px-2.5 py-1 text-[11px] font-semibold text-ore hover:bg-ore/20"
+                    class="rounded-lg border border-ore/50 bg-ore/10 px-2.5 py-1 text-[11px] font-semibold text-ore hover:bg-ore/20"
                     @click="selecionarParaLaudo(os)"
                   >
                     {{ os.status === 'ABERTA' ? 'Assumir / Iniciar' : 'Concluir / Laudo' }}
@@ -460,7 +433,7 @@ function formatarData(iso?: string | null) {
 
               <div
                 v-if="os.laudo_solucao"
-                class="rounded-md border border-line bg-abyss/60 px-3 py-2 text-[11px] text-mute"
+                class="rounded-xl border border-line bg-abyss/60 px-3 py-2 text-[11px] text-mute"
               >
                 <span class="font-semibold uppercase tracking-wider text-ok">Laudo Técnico: </span>
                 <span class="text-ink">{{ os.laudo_solucao }}</span>
@@ -480,7 +453,7 @@ function formatarData(iso?: string | null) {
               <!-- Formulário inline para Laudo -->
               <form
                 v-if="osEmEdicao?.id === os.id"
-                class="mt-2 flex flex-col gap-2.5 rounded-lg border border-ore/40 bg-panel-2 p-3"
+                class="mt-2 flex flex-col gap-2.5 rounded-2xl border border-ore/40 bg-panel-2 p-3"
                 @submit.prevent="salvarStatusELaudo"
               >
                 <div class="flex items-center justify-between">
@@ -501,7 +474,7 @@ function formatarData(iso?: string | null) {
                 <div class="flex justify-end gap-2">
                   <button
                     type="button"
-                    class="rounded border border-line px-3 py-1 text-xs text-mute hover:text-ink"
+                    class="rounded-lg border border-line px-3 py-1 text-xs text-mute hover:text-ink"
                     @click="osEmEdicao = null"
                   >
                     Cancelar
@@ -528,7 +501,7 @@ function formatarData(iso?: string | null) {
           <!-- FORMULÁRIO DE ABERTURA DE NOVA O.S. -->
           <form
             v-else
-            class="flex flex-col gap-4 p-5"
+            class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-5"
             @submit.prevent="criarOrdemServico"
           >
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -537,7 +510,7 @@ function formatarData(iso?: string | null) {
                 <select v-model="novaTorreId" class="scada-input" required>
                   <option :value="null" disabled>Selecione a torre...</option>
                   <option v-for="t in torres" :key="t.id" :value="t.id">
-                    {{ t.codigo }} — {{ t.setor ?? 'Setor Principal' }}
+                    {{ t.codigo }} — {{ typeof t.setor === 'string' ? t.setor : (t.setor?.nome ?? 'Setor Principal') }}
                   </option>
                 </select>
               </label>
@@ -573,7 +546,7 @@ function formatarData(iso?: string | null) {
             <div class="mt-2 flex items-center justify-end gap-2 border-t border-line pt-4">
               <button
                 type="button"
-                class="rounded-md border border-line px-4 py-2 text-xs font-semibold text-mute hover:text-ink"
+                class="rounded-xl border border-line px-4 py-2 text-xs font-semibold text-mute hover:text-ink"
                 @click="abaAtiva = 'LISTA'"
               >
                 Voltar à Lista
@@ -581,14 +554,12 @@ function formatarData(iso?: string | null) {
               <button
                 type="submit"
                 :disabled="enviando || !novaTorreId || !novaDescricao.trim()"
-                class="rounded-md bg-ore px-5 py-2 text-xs font-bold text-abyss transition-opacity hover:opacity-90 disabled:opacity-40"
+                class="rounded-xl bg-ore px-5 py-2 text-xs font-bold text-abyss transition-opacity hover:opacity-90 disabled:opacity-40"
               >
                 {{ enviando ? 'Gravando no Banco...' : 'Confirmar Abertura de O.S.' }}
               </button>
             </div>
           </form>
-        </div>
-      </div>
-    </Transition>
-  </Teleport>
+    </div>
+  </section>
 </template>

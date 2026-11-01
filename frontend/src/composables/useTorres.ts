@@ -10,14 +10,14 @@ import {
   getModo,
   modoPorPwm,
 } from '@/config/scada'
-import { torresApi } from '@/services/api'
+import { arduinoFisicoOnline, torresApi } from '@/services/api'
 import { mockBackend } from '@/services/mockBackend'
 import { setSimulacaoManual, simulacao } from '@/services/simulacao'
 import type { ConnectionState, ModoIluminacao, Torre } from '@/types/scada'
 
 /* --------------------------------------------------------------------------
    Estado compartilhado (singleton de módulo) — uma única fonte de verdade
-   para todos os componentes do Dashboard (Passo 3: Pinos 8, 9, 10, 11 e 12).
+   para todos os componentes do Dashboard.
    -------------------------------------------------------------------------- */
 const torres = ref<Torre[]>([])
 const connection = ref<ConnectionState>(simulacao.value ? 'online' : 'connecting')
@@ -39,6 +39,15 @@ function sortByCodigo(list: Torre[]) {
   return [...list].sort((a, b) => (a.codigo ?? '').localeCompare(b.codigo ?? '', 'pt-BR', { numeric: true }))
 }
 
+function isTorreEmManutencao(t: Partial<Torre> | null | undefined): boolean {
+  if (!t) return false
+  return Boolean(
+    t.emManutencao === true ||
+      t.em_manutencao === true ||
+      t.statusOperacional === 'EM_MANUTENCAO',
+  )
+}
+
 /** Placeholders exibidos enquanto não há leitura do backend (Pinos PWM 2 a 6) */
 const placeholders: Torre[] = Array.from({ length: TOTAL_TORRES }, (_, i) => ({
   id: -(i + 1),
@@ -47,7 +56,9 @@ const placeholders: Torre[] = Array.from({ length: TOTAL_TORRES }, (_, i) => ({
   modoIluminacao: 'DESLIGADA',
   nivelBrilhoAtual: 0,
   statusOperacional: 'OPERANDO',
-  conectado: true,
+  emManutencao: false,
+  em_manutencao: false,
+  conectado: false,
   consumoWatts: 0,
   setor: null,
 }))
@@ -65,20 +76,24 @@ async function poll() {
     const local = new Map(torres.value.map((t) => [t.id, t]))
     torres.value = sortByCodigo(
       incoming.map((t, idx) => {
+        const emManut = isTorreEmManutencao(t)
+        const conectado = t.conectado !== false
         const normalizada: Torre = {
           ...t,
           pinoPwm: t.pinoPwm >= 2 && t.pinoPwm <= 6 ? t.pinoPwm : (PINOS_POSTES[idx] ?? 2 + idx),
-          conectado: t.conectado !== false,
+          statusOperacional: emManut ? 'EM_MANUTENCAO' : 'OPERANDO',
+          emManutencao: emManut,
+          em_manutencao: emManut,
+          conectado,
           consumoWatts:
             typeof t.consumoWatts === 'number'
               ? t.consumoWatts
-              : calcularConsumoW(
-                  t.nivelBrilhoAtual,
-                  t.statusOperacional !== 'EM_MANUTENCAO' && t.conectado !== false,
-                ),
+              : calcularConsumoW(t.nivelBrilhoAtual, !emManut && conectado),
         }
         if (normalizada.nivelBrilhoAtual > 0) {
           memoriaUltimoPwm[normalizada.id] = normalizada.nivelBrilhoAtual
+        } else if (typeof normalizada.pwmAntesManutencao === 'number' && normalizada.pwmAntesManutencao > 0) {
+          memoriaUltimoPwm[normalizada.id] = normalizada.pwmAntesManutencao
         }
         return (pending.value[t.id] || cascataEmAndamento.value) && local.has(t.id)
           ? local.get(t.id)!
@@ -87,18 +102,35 @@ async function poll() {
     )
 
     // Se estiver em modo cerração e alguma torre operante estiver abaixo de 255, sai de cerração
-    const operantes = torres.value.filter((t) => t.id > 0 && t.statusOperacional !== 'EM_MANUTENCAO' && t.conectado !== false)
+    const operantes = torres.value.filter(
+      (t) => t.id > 0 && !isTorreEmManutencao(t) && t.conectado !== false,
+    )
     if (cerracaoGeralAtiva.value && operantes.some((t) => (t.nivelBrilhoAtual ?? 0) < 255)) {
       cerracaoGeralAtiva.value = false
       snapshotPreCerracao = {}
     }
 
     failures = 0
-    connection.value = 'online'
+    // Se estiver em Modo Real e o Arduino físico estiver desconectado, reflete "offline" imediatamente
+    if (!simulacao.value && !arduinoFisicoOnline.value) {
+      connection.value = 'offline'
+    } else {
+      connection.value = 'online'
+    }
     lastSync.value = new Date()
   } catch {
     failures++
-    if (failures >= OFFLINE_THRESHOLD) connection.value = 'offline'
+    if (failures >= OFFLINE_THRESHOLD) {
+      connection.value = 'offline'
+      if (!simulacao.value && torres.value.length) {
+        torres.value = torres.value.map((t) => ({
+          ...t,
+          conectado: false,
+          nivelBrilhoAtual: 0,
+          consumoWatts: 0,
+        }))
+      }
+    }
   } finally {
     if (!stopped) timer = setTimeout(poll, POLL_TORRES_MS)
   }
@@ -120,22 +152,26 @@ function patchLocal(id: number, patch: Partial<Torre>) {
   torres.value = torres.value.map((t) => {
     if (t.id !== id) return t
     const atualizado = { ...t, ...patch }
-    const operante = atualizado.statusOperacional !== 'EM_MANUTENCAO' && atualizado.conectado !== false
+    const emManut = isTorreEmManutencao(atualizado)
+    atualizado.emManutencao = emManut
+    atualizado.em_manutencao = emManut
+    atualizado.statusOperacional = emManut ? 'EM_MANUTENCAO' : 'OPERANDO'
+    const operante = !emManut && atualizado.conectado !== false
     atualizado.consumoWatts = calcularConsumoW(atualizado.nivelBrilhoAtual, operante)
     return atualizado
   })
 }
 
 /**
- * Define diretamente a intensidade PWM (0..255) e o modo de um poste (Portas 8 a 12).
+ * Define diretamente a intensidade PWM (0..255) e o modo de um poste (Portas 2 a 6).
  */
 async function setPwm(torre: Torre, novoPwm: number, modoForcado?: ModoIluminacao): Promise<boolean> {
-  if (torre.id < 0 || (connection.value !== 'online' && !simulacao.value)) {
-    lastError.value = 'Sem conexão com o controlador SCADA.'
+  if (isTorreEmManutencao(torre)) {
+    lastError.value = `${torre.codigo} (Porta D${torre.pinoPwm}) está em manutenção — acionamento de PWM/relé bloqueado.`
     return false
   }
-  if (torre.statusOperacional === 'EM_MANUTENCAO') {
-    lastError.value = `${torre.codigo} (Porta D${torre.pinoPwm}) está em manutenção — acionamento bloqueado.`
+  if (torre.id < 0 || (connection.value !== 'online' && !simulacao.value)) {
+    lastError.value = 'Arduino Offline: sem conexão serial com o controlador SCADA.'
     return false
   }
   if (torre.conectado === false) {
@@ -146,10 +182,6 @@ async function setPwm(torre: Torre, novoPwm: number, modoForcado?: ModoIluminaca
   const pwm = clampPwm(novoPwm)
   const modo = modoForcado ?? modoPorPwm(pwm)
 
-  // Ao alterar individualmente qualquer torre durante o Modo Cerração Geral:
-  // 1. Sai imediatamente do Modo Cerração Geral (desliga alerta visual no dashboard)
-  // 2. Limpa o snapshot anterior para não sobrepor as torres
-  // 3. Mantém a configuração das outras torres (permanecem intactas em 255 / ON)
   if (cerracaoGeralAtiva.value) {
     cerracaoGeralAtiva.value = false
     snapshotPreCerracao = {}
@@ -194,15 +226,20 @@ async function setModo(torre: Torre, modo: ModoIluminacao): Promise<boolean> {
 
 /** Alterna o acionamento (Liga/Desliga) individual do poste mantendo memória de brilho */
 async function toggleAcionamento(torre: Torre): Promise<boolean> {
+  if (isTorreEmManutencao(torre)) {
+    lastError.value = `${torre.codigo} (Porta D${torre.pinoPwm}) está em manutenção — acionamento de PWM/relé bloqueado.`
+    return false
+  }
   const estaLigada =
-    torre.statusOperacional !== 'EM_MANUTENCAO' &&
+    !isTorreEmManutencao(torre) &&
     torre.conectado !== false &&
     (torre.nivelBrilhoAtual ?? 0) > 0
 
   if (estaLigada) {
     return setPwm(torre, 0, 'DESLIGADA')
   }
-  const brilhoRestaurado = memoriaUltimoPwm[torre.id] ?? PWM_LIGAR_PADRAO
+  const brilhoRestaurado =
+    memoriaUltimoPwm[torre.id] ?? torre.pwmAntesManutencao ?? PWM_LIGAR_PADRAO
   return setPwm(torre, brilhoRestaurado > 0 ? brilhoRestaurado : PWM_LIGAR_PADRAO)
 }
 
@@ -239,21 +276,19 @@ async function toggleConectividade(torre: Torre): Promise<boolean> {
 }
 
 /**
- * Efeito Cascata Progressivo (Portas Digitais 8 -> 9 -> 10 -> 11 -> 12):
- * Aciona ou desliga os 5 postes em sequência com intervalo visual de 180ms,
- * replicando no Digital Twin o mesmo efeito cascata gravado no Arduino Uno.
+ * Efeito Cascata Progressivo:
+ * Aciona ou desliga os postes operantes em sequência com intervalo visual de 180ms.
  */
 async function acionarCascata(pwmAlvo?: number): Promise<void> {
   if (cascataEmAndamento.value) return
   const operantes = sortByCodigo(torres.value).filter(
-    (t) => t.id > 0 && t.statusOperacional !== 'EM_MANUTENCAO' && t.conectado !== false,
+    (t) => t.id > 0 && !isTorreEmManutencao(t) && t.conectado !== false,
   )
   if (!operantes.length) {
     lastError.value = 'Nenhum poste operante e online disponível para acionamento em cascata.'
     return
   }
 
-  // Se todos já estão ligados e nenhum alvo foi forçado, alterna entre Normal (170), Cerração (255) ou Desligar (0)
   const todosLigados = operantes.every((t) => (t.nivelBrilhoAtual ?? 0) > 0)
   const alvoFinal =
     typeof pwmAlvo === 'number'
@@ -289,10 +324,6 @@ async function acionarCascata(pwmAlvo?: number): Promise<void> {
   }
 }
 
-/**
- * Atualiza via Software os níveis virtuais de Bateria (%) e Luminosidade (LDR 0..1023),
- * substituindo o potenciômetro e o LDR físicos no painel Vue.js / MySQL.
- */
 async function atualizarSensoresVirtuais(bateria: number, ldr: number, aplicarRegraAuto = true): Promise<void> {
   try {
     if (aplicarRegraAuto) {
@@ -305,7 +336,7 @@ async function atualizarSensoresVirtuais(bateria: number, ldr: number, aplicarRe
       const alvo = batClamped < 5 || ldrClamped >= 450 ? 0 : batClamped < 25 ? 70 : 170
       const modo = modoPorPwm(alvo)
       torres.value = torres.value.map((t) => {
-        if (t.statusOperacional === 'EM_MANUTENCAO' || t.conectado === false) return t
+        if (isTorreEmManutencao(t) || t.conectado === false) return t
         return {
           ...t,
           nivelBrilhoAtual: alvo,
@@ -328,7 +359,7 @@ async function atualizarSensoresVirtuais(bateria: number, ldr: number, aplicarRe
 /** Botão mestre de contingência: todas as torres operantes -> CERRAÇÃO (100% / PWM 255). */
 async function toggleCerracaoGeral() {
   const operantes = torres.value.filter(
-    (t) => t.id > 0 && t.statusOperacional !== 'EM_MANUTENCAO' && t.conectado !== false,
+    (t) => t.id > 0 && !isTorreEmManutencao(t) && t.conectado !== false,
   )
 
   if (!cerracaoGeralAtiva.value) {
@@ -380,7 +411,7 @@ export function useTorres() {
   })
 
   const lista = computed(() => (torres.value.length ? torres.value : placeholders))
-  const isOnline = computed(() => connection.value === 'online' || simulacao.value)
+  const isOnline = computed(() => connection.value === 'online')
 
   return {
     torres: lista,

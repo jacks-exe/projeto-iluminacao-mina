@@ -2,11 +2,12 @@
 import { ref, watch } from 'vue'
 import DashboardHeader from '@/components/dashboard/DashboardHeader.vue'
 import MineDigitalTwin from '@/components/dashboard/MineDigitalTwin.vue'
-import MaintenancePanel from '@/components/dashboard/MaintenancePanel.vue'
-import EnergyMetrics from '@/components/dashboard/EnergyMetrics.vue'
 import ControlDock from '@/components/dashboard/ControlDock.vue'
-import AnalyticsHistoricoModal from '@/components/dashboard/AnalyticsHistoricoModal.vue'
+import OrdensServicoView from '@/views/OrdensServicoView.vue'
+import AnalyticsView from '@/views/AnalyticsView.vue'
+import ConfiguracoesView from '@/views/ConfiguracoesView.vue'
 import { currentPermissions } from '@/config/auth'
+import type { NavId } from '@/config/navegacao'
 import { useTorres } from '@/composables/useTorres'
 import type { ModoIluminacao, Torre } from '@/types/scada'
 
@@ -28,12 +29,25 @@ const {
   toggleCerracaoGeral,
   toggleSimulacao,
   resetSimulacao,
+  refresh,
 } = useTorres()
 
-const maintenancePanel = ref<InstanceType<typeof MaintenancePanel> | null>(null)
 const selectedTowerId = ref<number | null>(null)
-const analyticsAberta = ref(false)
 
+/* Cada aba é uma view de tela cheia que substitui o conteúdo principal (sem modais) */
+type Aba = Exclude<NavId, 'telemetria'>
+const tab = ref<Aba>('visao')
+/** Torre que originou a abertura da tela de O.S. (duplo clique no mapa) */
+const osTorreId = ref<number | null>(null)
+
+function onNavigate(id: NavId) {
+  if (id === 'telemetria') return
+  if (id === 'os') osTorreId.value = null
+  tab.value = id
+}
+
+/* Entrada em cascata: cada card "cai" com um pequeno atraso sequencial */
+const stagger = (i: number) => ({ animationDelay: `${i * 75}ms` })
 function onSelect(torre: Torre, modo: ModoIluminacao) {
   selectedTowerId.value = torre.id
   if (!currentPermissions.value.canControlLighting) {
@@ -72,7 +86,13 @@ function onToggleConn(torre: Torre) {
 
 function onMaintenance(torre: Torre) {
   selectedTowerId.value = torre.id
-  maintenancePanel.value?.abrirPara(torre)
+  const p = currentPermissions.value
+  if (!p.canOpenOS && !p.canAttendOS) {
+    lastError.value = `Acesso restrito (${p.label}): sem permissão para Ordens de Serviço.`
+    return
+  }
+  osTorreId.value = torre.id
+  tab.value = 'os'
 }
 
 /* Toast de alarme para comandos bloqueados/falhos */
@@ -96,22 +116,26 @@ watch(lastError, (msg) => {
       :last-sync="lastSync"
       :simulacao="simulacao"
       :torres="torres"
-      @toggle-simulacao="toggleSimulacao"
-      @reset-simulacao="resetSimulacao"
-      @abrir-analytics="analyticsAberta = true"
+      :active-id="tab"
+      @navigate="onNavigate"
     />
 
-    <main class="grid min-h-0 flex-1 grid-cols-[320px_minmax(0,1fr)] gap-3 p-3">
-      <!-- Lateral esquerda -->
-      <aside class="flex min-h-0 flex-col gap-3">
-        <MaintenancePanel ref="maintenancePanel" :torres="torres" />
-        <EnergyMetrics :torres="torres" @abrir-analytics="analyticsAberta = true" />
-      </aside>
-
-      <!-- Centro + dock -->
-      <div class="flex min-h-0 min-w-0 flex-col gap-3">
-        <!-- Digital Twin com telemetria e conectividade dos pinos PWM 2 a 6 -->
+    <Transition
+      mode="out-in"
+      enter-active-class="transition-all duration-300 ease-out motion-reduce:transition-none"
+      enter-from-class="opacity-0 translate-y-4 scale-95"
+      leave-active-class="transition-all duration-200 ease-in motion-reduce:transition-none"
+      leave-to-class="opacity-0 -translate-y-4 scale-95"
+    >
+      <!-- Visão Geral: Digital Twin ocupa toda a largura + dock de controle -->
+      <main
+        v-if="tab === 'visao'"
+        key="visao"
+        class="flex min-h-0 min-w-0 flex-1 flex-col gap-6 p-4"
+      >
         <MineDigitalTwin
+          class="bento-in"
+          :style="stagger(0)"
           :torres="torres"
           :pending="pending"
           :online="isOnline"
@@ -122,6 +146,8 @@ watch(lastError, (msg) => {
         />
 
         <ControlDock
+          class="bento-in"
+          :style="stagger(1)"
           :torres="torres"
           :pending="pending"
           :online="isOnline"
@@ -135,16 +161,29 @@ watch(lastError, (msg) => {
           @cascata="acionarCascata"
           @cerracao="toggleCerracaoGeral"
         />
-      </div>
-    </main>
+      </main>
 
-    <!-- Modal Analytics, Histórico de Telemetria e Auditoria Operacional (Passo 4) -->
-    <AnalyticsHistoricoModal
-      :aberta="analyticsAberta"
-      :torres="torres"
-      @fechar="analyticsAberta = false"
-    />
+      <!-- Ordens de Serviço (tela cheia) -->
+      <OrdensServicoView
+        v-else-if="tab === 'os'"
+        key="os"
+        :torres="torres"
+        :torre-inicial-id="osTorreId"
+        @atualizado="refresh"
+      />
 
+      <!-- Configurações: modo de operação + gestão de usuários (ADMIN) -->
+      <ConfiguracoesView
+        v-else-if="tab === 'config'"
+        key="config"
+        :simulacao="simulacao"
+        @toggle-simulacao="toggleSimulacao"
+        @reset-simulacao="resetSimulacao"
+      />
+
+      <!-- Analytics, histórico de telemetria e auditoria (tela cheia) -->
+      <AnalyticsView v-else key="analytics" :torres="torres" />
+    </Transition>
     <!-- Toast de alarme -->
     <Transition
       enter-active-class="transition duration-200 ease-out"
@@ -155,7 +194,7 @@ watch(lastError, (msg) => {
       <div
         v-if="toast"
         role="alert"
-        class="fixed right-4 top-16 z-50 flex max-w-sm items-start gap-2.5 rounded-lg border border-fault/40 bg-panel/95 px-3.5 py-2.5 text-xs text-ink shadow-2xl shadow-black/60 backdrop-blur"
+        class="fixed right-4 top-16 z-50 flex max-w-sm items-start gap-2.5 rounded-2xl border border-rose-500/40 bg-panel/95 px-4 py-3 text-xs text-ink shadow-2xl shadow-black/60 backdrop-blur"
       >
         <span class="mt-0.5 size-2 shrink-0 animate-pulse rounded-full bg-fault" />
         {{ toast }}

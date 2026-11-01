@@ -19,10 +19,11 @@ const uint8_t NUM_POSTES = 5;
 const uint8_t PINOS_POSTES[NUM_POSTES]       = {2, 3, 4, 5, 6};
 const uint8_t PINOS_ESPELHO_MEGA[NUM_POSTES] = {8, 9, 10, 11, 12};
 
-uint8_t pwmAtual[NUM_POSTES]        = {170, 170, 170, 170, 170};
-uint8_t pwmAlvo[NUM_POSTES]         = {170, 170, 170, 170, 170};
-bool posteConectado[NUM_POSTES]     = {true, true, true, true, true};
-bool posteEmManutencao[NUM_POSTES]  = {false, false, false, false, false};
+uint8_t pwmAtual[NUM_POSTES]             = {170, 170, 170, 170, 170};
+uint8_t pwmAlvo[NUM_POSTES]              = {170, 170, 170, 170, 170};
+uint8_t pwmAntesManutencao[NUM_POSTES]   = {170, 170, 170, 170, 170};
+bool posteConectado[NUM_POSTES]          = {true, true, true, true, true};
+bool posteEmManutencao[NUM_POSTES]       = {false, false, false, false, false};
 
 float nivelBateriaVirtual = 92.0f;
 uint16_t valorLdrVirtual  = 310;
@@ -276,16 +277,27 @@ void interpretarComando(char *cmd) {
     return;
   }
 
-  // 4. Manutenção individual (MANUT:id,estado)
+  // 4. Manutenção individual (MANUT:id,estado[,pwm_restaurado])
   if (strncmp(cmd, "MANUT:", 6) == 0) {
     int idPoste = 0;
     int ativo   = 0;
-    if (sscanf(cmd + 6, "%d,%d", &idPoste, &ativo) == 2) {
+    int pwmRest = -1;
+    int lidos   = sscanf(cmd + 6, "%d,%d,%d", &idPoste, &ativo, &pwmRest);
+    if (lidos >= 2) {
       if (idPoste >= 1 && idPoste <= (int)NUM_POSTES) {
         uint8_t idx = (uint8_t)(idPoste - 1);
-        posteEmManutencao[idx] = (ativo != 0);
-        if (posteEmManutencao[idx]) {
+        if (ativo != 0) {
+          if (!posteEmManutencao[idx]) {
+            pwmAntesManutencao[idx] = pwmAlvo[idx];
+          }
+          posteEmManutencao[idx] = true;
           aplicarAlvoImediato(idx, 0);
+        } else {
+          posteEmManutencao[idx] = false;
+          uint8_t restaurar = (lidos == 3 && pwmRest >= 0)
+            ? (uint8_t)constrain(pwmRest, 0, 255)
+            : pwmAntesManutencao[idx];
+          aplicarAlvoImediato(idx, restaurar);
         }
       }
     }

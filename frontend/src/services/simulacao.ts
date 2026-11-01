@@ -2,14 +2,13 @@ import { ref, watch } from 'vue'
 
 /* --------------------------------------------------------------------------
    Flag global do Modo Simulação (persistida no navegador).
-   - simulacao:     dados vêm do backend simulado local (mockBackend.ts).
-                    Ativo por padrão quando não há preferência salva para
-                    permitir uso imediato com backend/Arduino desligados.
-   - autoFallback:  entra em simulação automaticamente se a API real falhar.
-                    Desligado quando o operador desativa a simulação manualmente.
+   - simulacao:     false por padrão (Modo Real integrado ao Arduino/MySQL),
+                    evitando falso positivo de conexão quando o cabo USB é desconectado.
+   - autoFallback:  false por padrão para que quedas físicas do Arduino
+                    mudem imediatamente o status para "Offline" em vez de mascarar.
    -------------------------------------------------------------------------- */
-const KEY_SIM = 'scada.simulacao'
-const KEY_AUTO = 'scada.simulacao.auto'
+const KEY_SIM = 'scada.modo_simulacao_v2'
+const KEY_AUTO = 'scada.modo_simulacao_auto_v2'
 
 function read(key: string, fallback: boolean): boolean {
   try {
@@ -20,14 +19,12 @@ function read(key: string, fallback: boolean): boolean {
   }
 }
 
-export const simulacao = ref(read(KEY_SIM, true))
-export const autoFallback = ref(read(KEY_AUTO, true))
+export const simulacao = ref(read(KEY_SIM, false))
+export const autoFallback = ref(read(KEY_AUTO, false))
 
 export function setSimulacaoManual(ativo: boolean) {
   simulacao.value = ativo
-  // Se o operador desligar manualmente, não reativa no próximo erro de rede;
-  // se religar, volta a permitir auto-fallback.
-  autoFallback.value = ativo
+  autoFallback.value = false
 }
 
 watch(simulacao, (v) => {

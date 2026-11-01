@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import SlidingTabs from '@/components/ui/SlidingTabs.vue'
 import { currentPermissions } from '@/config/auth'
 import { MODOS, PINOS_POSTES, calcularConsumoW, clampPwm, getModo, pwmToPercent } from '@/config/scada'
 import type { ModoIluminacao, Torre } from '@/types/scada'
@@ -55,6 +56,10 @@ const bateria = computed(() =>
   typeof props.torre.bateria === 'number' ? Math.round(props.torre.bateria) : null,
 )
 
+/** Modo ativo (null quando em manutenção/offline) e itens do seletor líquido */
+const modoAtivoId = computed(() => (!manut.value && conectado.value ? atual.value.id : null))
+const itensModo = MODOS.map((m) => ({ id: m.id, label: m.sigla }))
+
 function aoSoltarSlider() {
   if (bloqueado.value) return
   emit('changePwm', clampPwm(sliderPwm.value))
@@ -63,15 +68,15 @@ function aoSoltarSlider() {
 
 <template>
   <div
-    class="flex min-w-0 flex-col gap-2 rounded-lg border p-2.5 transition-all duration-300"
+    class="flex min-w-0 flex-col gap-4 rounded-2xl border p-4 transition-all duration-300"
     :class="
       manut
-        ? 'border-fault/40 bg-panel-2/60'
+        ? 'border-fault/40 bg-[#161821]'
         : !conectado
           ? 'border-fault/30 bg-abyss/80 opacity-85'
           : highlighted
             ? 'border-ore bg-ore/10 ring-1 ring-ore/60 shadow-[0_0_20px_-4px_rgba(217,119,6,0.55)]'
-            : 'border-line bg-panel-2/60'
+            : 'border-white/5 bg-[#161821]'
     "
   >
     <!-- Linha 1: Identificação do Poste + Porta Digital (8..12) + Status de Conectividade + Botão Liga/Desliga -->
@@ -88,7 +93,7 @@ function aoSoltarSlider() {
           {{ torre.codigo }}
         </span>
         <span
-          class="rounded border border-ore/40 bg-ore/10 px-1 py-px font-mono text-[9px] font-bold text-ore"
+          class="rounded-lg border border-ore/40 bg-ore/10 px-1 py-px text-[9px] font-bold text-ore"
           :title="`Porta Digital ${pinoDigital} do Arduino Uno`"
         >
           D{{ pinoDigital }}
@@ -101,7 +106,7 @@ function aoSoltarSlider() {
         <button
           type="button"
           :disabled="bloqueadoConn"
-          class="flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider transition-colors disabled:cursor-not-allowed disabled:opacity-55"
+          class="flex items-center gap-1 rounded-lg border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider transition-colors disabled:cursor-not-allowed disabled:opacity-55"
           :class="
             conectado
               ? 'border-ok/40 bg-ok/10 text-ok hover:bg-ok/20'
@@ -126,7 +131,7 @@ function aoSoltarSlider() {
           :disabled="bloqueado"
           :aria-pressed="ligada"
           :title="ligada ? `Desligar ${torre.codigo} (Porta D${pinoDigital})` : `Acionar ${torre.codigo} (Porta D${pinoDigital})`"
-          class="rounded border px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase transition-all disabled:cursor-not-allowed disabled:opacity-35"
+          class="rounded-lg border px-1.5 py-0.5 text-[9px] font-bold uppercase transition-all disabled:cursor-not-allowed disabled:opacity-35"
           :class="
             ligada
               ? 'border-ore bg-ore text-abyss shadow-[0_0_10px_-2px_rgba(217,119,6,0.7)]'
@@ -142,10 +147,10 @@ function aoSoltarSlider() {
     <!-- Linha 2: Telemetria de PWM, Percentual, Consumo (W) e Bateria -->
     <div class="flex items-center justify-between text-[10px]">
       <span v-if="manut" class="font-semibold uppercase tracking-wider text-fault">
-        ⚠ Em Manutenção
+        Em Manutenção
       </span>
       <span v-else-if="!conectado" class="font-semibold uppercase tracking-wider text-fault">
-        ⚡ Sem Telemetria
+        Sem Telemetria
       </span>
       <span v-else class="font-mono tabular-nums text-mute">
         PWM <strong class="text-ink">{{ sliderPwm }}</strong>
@@ -156,11 +161,11 @@ function aoSoltarSlider() {
         <span class="text-clay" title="Consumo instantâneo do poste">{{ consumoW }}W</span>
         <span
           v-if="bateria !== null"
-          class="rounded border border-line/80 bg-abyss/70 px-1 py-px text-[9px]"
+          class="rounded-lg border border-line/80 bg-abyss/70 px-1 py-px text-[9px]"
           :class="bateria < 30 ? 'text-fault' : 'text-mute'"
           title="Carga da bateria / nobreak da torre"
         >
-          🔋{{ bateria }}%
+          BAT {{ bateria }}%
         </span>
       </div>
     </div>
@@ -175,46 +180,23 @@ function aoSoltarSlider() {
         step="5"
         :disabled="bloqueado"
         :aria-label="`Intensidade PWM de ${torre.codigo} (Porta D${pinoDigital})`"
-        class="h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-abyss accent-ore disabled:cursor-not-allowed disabled:opacity-35"
+        class="h-1.5 w-full cursor-pointer appearance-none rounded-2xl bg-abyss accent-ore disabled:cursor-not-allowed disabled:opacity-35"
         @change="aoSoltarSlider"
       />
     </div>
 
     <!-- Linha 4: Seletor Segmentado de Modos Predefinidos -->
-    <div
-      class="grid grid-cols-4 gap-0.5 rounded-md border border-line bg-abyss p-0.5"
-      role="radiogroup"
+    <SlidingTabs
+      :items="itensModo"
+      :model-value="modoAtivoId"
+      :disabled="bloqueado"
       :aria-label="`Modo da torre ${torre.codigo}`"
-      :aria-disabled="bloqueado"
-    >
-      <button
-        v-for="m in MODOS"
-        :key="m.id"
-        type="button"
-        role="radio"
-        :aria-checked="atual.id === m.id && !manut && conectado"
-        :disabled="bloqueado"
-        :title="`${m.label} — PWM ${m.pwm}`"
-        class="rounded-[5px] py-1 font-mono text-[10px] font-semibold tracking-wider transition-all duration-200 focus-visible:outline-1 focus-visible:outline-ore disabled:cursor-not-allowed"
-        :class="
-          atual.id === m.id && !manut && conectado
-            ? 'text-abyss'
-            : bloqueado
-              ? 'text-mute/30'
-              : 'text-mute hover:bg-panel-2 hover:text-ink'
-        "
-        :style="
-          atual.id === m.id && !manut && conectado
-            ? {
-                backgroundColor: m.id === 'DESLIGADA' ? '#6B7280' : m.color,
-                boxShadow: m.pwm ? `0 0 12px -2px ${m.color}` : 'none',
-              }
-            : undefined
-        "
-        @click="emit('select', m.id)"
-      >
-        {{ m.sigla }}
-      </button>
-    </div>
+      container-class="w-full rounded-full bg-black/40 p-1"
+      button-class="flex-1 rounded-full py-1 text-[10px] font-semibold tracking-wider"
+      pill-class="rounded-full bg-white/10 ring-1 ring-inset ring-white/10"
+      active-text-class="text-white"
+      :inactive-text-class="bloqueado ? 'text-mute/30' : 'text-mute hover:text-ink'"
+      @update:model-value="(id) => emit('select', id)"
+    />
   </div>
 </template>

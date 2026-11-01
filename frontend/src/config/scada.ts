@@ -116,8 +116,8 @@ export function calcularConsumoW(pwm: number, operante = true): number {
 /* ==========================================================================
    Telemetria (Leitura espaçada sem spam; comandos enviados por evento POST)
    ========================================================================== */
-export const POLL_TORRES_MS = 12000
-export const POLL_MANUTENCAO_MS = 15000
+export const POLL_TORRES_MS = 2500
+export const POLL_MANUTENCAO_MS = 10000
 export const REQUEST_TIMEOUT_MS = 2500
-/** Falhas consecutivas antes de declarar "Offline" (evita flicker) */
-export const OFFLINE_THRESHOLD = 2
+/** Falhas consecutivas antes de declarar "Offline" */
+export const OFFLINE_THRESHOLD = 1

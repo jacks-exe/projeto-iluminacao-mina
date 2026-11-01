@@ -1,32 +1,27 @@
 <?php
 /**
- * GEONEX SCADA - Passo 3: Endpoint REST de Controle dos 5 Postes (Portas 8 a 12),
- * Status de Conectividade, Consumo Energético e Telemetria.
+ * GEONEX SCADA - Passo 3: Endpoint REST de Controle dos 5 Postes (Pinos PWM 2 a 6),
+ * Status de Conectividade (Heartbeat Serial), Máquina de Estados de Manutenção e Telemetria.
  *
  * Estilo: PHP Puro Procedural estritamente com funções mysqli_* (Sem PDO).
- *
- * Métodos suportados:
- *  - GET  /postes.php[?historico=1] -> Lista o estado em tempo real dos 5 postes (portas 8 a 12) e resumo de telemetria
- *  - PUT  /postes.php               -> Atualiza intensidade PWM (0..255), modo, conectividade ou aciona efeito cascata
- *  - POST /postes.php               -> Registra telemetria vinda do Arduino Uno / Ponte IoT ou executa comandos em lote
  */
 
 require_once __DIR__ . '/conexao.php';
 
-// Potência nominal de cada refletor LED industrial de mina a 100% (PWM 255)
 define('POTENCIA_NOMINAL_POSTE_W', 400.0);
+define('PONTE_IOT_STATUS_URL', 'http://127.0.0.1:5005/evento');
 
 /**
- * Garante que a estrutura do Passo 3 (colunas de telemetria, consumo, conectividade
- * e portas digitais sequenciais 8, 9, 10, 11 e 12) exista no banco MySQL ativo.
+ * Garante que a estrutura do Passo 3 exista no banco MySQL ativo.
  */
 function garantir_schema_passo3($conn): void {
-    // 1. Verifica colunas extras na tabela `torres`
     $colunas_necessarias = [
-        'conectado'     => "ALTER TABLE torres ADD COLUMN conectado TINYINT(1) NOT NULL DEFAULT 1 COMMENT '1 = Online, 0 = Offline' AFTER status_operacional",
-        'consumo_watts' => "ALTER TABLE torres ADD COLUMN consumo_watts DECIMAL(7,2) NOT NULL DEFAULT 0.00 COMMENT 'Consumo instantâneo (W)' AFTER conectado",
-        'bateria'       => "ALTER TABLE torres ADD COLUMN bateria DECIMAL(5,2) NOT NULL DEFAULT 92.00 COMMENT 'Nobreak UPS (%)' AFTER consumo_watts",
-        'ldr_atual'     => "ALTER TABLE torres ADD COLUMN ldr_atual INT NOT NULL DEFAULT 320 COMMENT 'Sensor LDR (0..1023)' AFTER bateria"
+        'pwm_antes_manutencao' => "ALTER TABLE torres ADD COLUMN pwm_antes_manutencao TINYINT UNSIGNED NOT NULL DEFAULT 170 COMMENT 'Último PWM antes da manutenção' AFTER nivel_brilho_atual",
+        'em_manutencao'        => "ALTER TABLE torres ADD COLUMN em_manutencao TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1 = Em Manutenção, 0 = Operando' AFTER status_operacional",
+        'conectado'            => "ALTER TABLE torres ADD COLUMN conectado TINYINT(1) NOT NULL DEFAULT 1 COMMENT '1 = Online, 0 = Offline' AFTER em_manutencao",
+        'consumo_watts'        => "ALTER TABLE torres ADD COLUMN consumo_watts DECIMAL(7,2) NOT NULL DEFAULT 0.00 COMMENT 'Consumo instantâneo (W)' AFTER conectado",
+        'bateria'              => "ALTER TABLE torres ADD COLUMN bateria DECIMAL(5,2) NOT NULL DEFAULT 92.00 COMMENT 'Nobreak UPS (%)' AFTER consumo_watts",
+        'ldr_atual'            => "ALTER TABLE torres ADD COLUMN ldr_atual INT NOT NULL DEFAULT 320 COMMENT 'Sensor LDR (0..1023)' AFTER bateria"
     ];
 
     foreach ($colunas_necessarias as $coluna => $sql_alter) {
@@ -39,7 +34,6 @@ function garantir_schema_passo3($conn): void {
         }
     }
 
-    // 2. Garante a existência da tabela de histórico de telemetria e consumo (`telemetria_postes`)
     $sql_tabela_telemetria = "
         CREATE TABLE IF NOT EXISTS telemetria_postes (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -60,7 +54,6 @@ function garantir_schema_passo3($conn): void {
     ";
     mysqli_query($conn, $sql_tabela_telemetria);
 
-    // 3. Sincroniza as 5 portas PWM sequenciais do Arduino Mega (2, 3, 4, 5 e 6) para os 5 postes (id 1 a 5)
     $pinos_padrao = [
         1 => ['codigo' => 'TR-01', 'setor' => 'Setor Norte - Lavra A',  'pino' => 2],
         2 => ['codigo' => 'TR-02', 'setor' => 'Setor Norte - Lavra A',  'pino' => 3],
@@ -75,8 +68,8 @@ function garantir_schema_passo3($conn): void {
         $setor = $cfg['setor'];
 
         $stmt_up = mysqli_prepare($conn, "
-            INSERT INTO torres (id, codigo, setor, pino_pwm, modo_iluminacao, nivel_brilho_atual, status_operacional, conectado, consumo_watts, bateria)
-            VALUES (?, ?, ?, ?, 'NORMAL', 170, 'OPERANDO', 1, 266.67, 92.00)
+            INSERT INTO torres (id, codigo, setor, pino_pwm, modo_iluminacao, nivel_brilho_atual, pwm_antes_manutencao, status_operacional, em_manutencao, conectado, consumo_watts, bateria)
+            VALUES (?, ?, ?, ?, 'NORMAL', 170, 170, 'OPERANDO', 0, 1, 266.67, 92.00)
             ON DUPLICATE KEY UPDATE pino_pwm = VALUES(pino_pwm)
         ");
         if ($stmt_up) {
@@ -85,6 +78,41 @@ function garantir_schema_passo3($conn): void {
             mysqli_stmt_close($stmt_up);
         }
     }
+}
+
+/**
+ * Verifica em tempo real na Ponte IoT (heartbeat serial) se o cabo USB do Arduino está conectado.
+ * Se a conexão serial caiu ou a ponte reportar OFFLINE, atualiza imediatamente o banco MySQL para Offline (conectado = 0).
+ */
+function sincronizar_heartbeat_arduino($conn, bool $modo_simulacao = false): bool {
+    if ($modo_simulacao) {
+        return true;
+    }
+
+    $ctx = stream_context_create([
+        'http' => [
+            'method'        => 'GET',
+            'timeout'       => 0.18,
+            'ignore_errors' => true,
+        ],
+    ]);
+
+    $resp = @file_get_contents(PONTE_IOT_STATUS_URL, false, $ctx);
+    $arduino_online = false;
+
+    if ($resp !== false) {
+        $json = json_decode($resp, true);
+        if (is_array($json) && !empty($json['online']) && strtoupper((string)($json['status'] ?? '')) === 'ONLINE') {
+            $arduino_online = true;
+        }
+    }
+
+    if (!$arduino_online) {
+        // Se o cabo do Arduino foi desconectado ou a Ponte Serial caiu, muda todas as torres no banco para Offline imediatamente
+        mysqli_query($conn, "UPDATE torres SET conectado = 0, consumo_watts = 0.00 WHERE conectado = 1");
+    }
+
+    return $arduino_online;
 }
 
 /**
@@ -171,10 +199,12 @@ function registrar_log_telemetria(
 function formatar_poste_scada(array $row): array {
     $id          = (int)$row['id'];
     $pino        = (int)$row['pino_pwm'];
-    $status_op   = (string)$row['status_operacional'];
+    $em_manut    = ((int)($row['em_manutencao'] ?? 0) === 1) || ((string)$row['status_operacional'] === 'EM_MANUTENCAO');
+    $status_op   = $em_manut ? 'EM_MANUTENCAO' : 'OPERANDO';
     $conectado   = isset($row['conectado']) ? ((int)$row['conectado'] === 1) : true;
     $pwm_bruto   = (int)$row['nivel_brilho_atual'];
-    $pwm_efetivo = ($status_op === 'EM_MANUTENCAO' || !$conectado) ? 0 : max(0, min(255, $pwm_bruto));
+    $pwm_antes   = isset($row['pwm_antes_manutencao']) ? (int)$row['pwm_antes_manutencao'] : $pwm_bruto;
+    $pwm_efetivo = ($em_manut || !$conectado) ? 0 : max(0, min(255, $pwm_bruto));
     $modo        = (string)$row['modo_iluminacao'];
     $consumo_w   = calcular_consumo_watts($pwm_efetivo, $status_op, $conectado ? 1 : 0);
     $bateria     = isset($row['bateria']) ? round((float)$row['bateria'], 1) : 92.0;
@@ -183,40 +213,44 @@ function formatar_poste_scada(array $row): array {
 
     return [
         // Campos camelCase (compatíveis com TypeScript `Torre` no Vue.js 3)
-        'id'                 => $id,
-        'codigo'             => (string)$row['codigo'],
-        'pinoPwm'            => $pino,
-        'modoIluminacao'     => $modo,
-        'nivelBrilhoAtual'   => $pwm_efetivo,
-        'statusOperacional'  => $status_op,
-        'conectado'          => $conectado,
-        'consumoWatts'       => $consumo_w,
-        'bateria'            => $bateria,
-        'ldrAtual'           => $ldr,
-        'atualizadoEm'       => $row['atualizado_em'] ?? null,
-        'setor'              => [
+        'id'                   => $id,
+        'codigo'               => (string)$row['codigo'],
+        'pinoPwm'              => $pino,
+        'modoIluminacao'       => $modo,
+        'nivelBrilhoAtual'     => $pwm_efetivo,
+        'pwmAntesManutencao'   => $pwm_antes,
+        'statusOperacional'    => $status_op,
+        'emManutencao'         => $em_manut,
+        'conectado'            => $conectado,
+        'consumoWatts'         => $consumo_w,
+        'bateria'              => $bateria,
+        'ldrAtual'             => $ldr,
+        'atualizadoEm'         => $row['atualizado_em'] ?? null,
+        'setor'                => [
             'id'                => $id,
             'nome'              => $nome_setor,
             'condicaoClimatica' => ($modo === 'CERRACAO') ? 'CERRACAO' : 'NORMAL'
         ],
         // Campos snake_case (compatíveis com scripts PHP / Ponte Python IoT)
-        'pino_pwm'           => $pino,
-        'modo_iluminacao'    => $modo,
-        'nivel_brilho_atual' => $pwm_efetivo,
-        'status_operacional' => $status_op,
-        'consumo_watts'      => $consumo_w,
-        'ldr_atual'          => $ldr,
-        'atualizado_em'      => $row['atualizado_em'] ?? null,
+        'pino_pwm'             => $pino,
+        'modo_iluminacao'      => $modo,
+        'nivel_brilho_atual'   => $pwm_efetivo,
+        'pwm_antes_manutencao' => $pwm_antes,
+        'status_operacional'   => $status_op,
+        'em_manutencao'        => $em_manut,
+        'consumo_watts'        => $consumo_w,
+        'ldr_atual'            => $ldr,
+        'atualizado_em'        => $row['atualizado_em'] ?? null,
     ];
 }
 
 /**
- * Consulta todos os 5 postes ordenados pelas portas digitais sequenciais (8 a 12)
+ * Consulta todos os 5 postes ordenados pelas portas PWM sequenciais (2 a 6)
  */
 function buscar_todos_postes($conn): array {
     $sql = "
-        SELECT id, codigo, setor, pino_pwm, modo_iluminacao, nivel_brilho_atual,
-               status_operacional, conectado, consumo_watts, bateria, ldr_atual, atualizado_em
+        SELECT id, codigo, setor, pino_pwm, modo_iluminacao, nivel_brilho_atual, pwm_antes_manutencao,
+               status_operacional, em_manutencao, conectado, consumo_watts, bateria, ldr_atual, atualizado_em
           FROM torres
          ORDER BY pino_pwm ASC, id ASC
          LIMIT 5
@@ -233,7 +267,6 @@ function buscar_todos_postes($conn): array {
     return $lista;
 }
 
-// Inicializa e valida o schema do Passo 3
 garantir_schema_passo3($conn);
 
 $metodo      = $_SERVER['REQUEST_METHOD'];
@@ -241,9 +274,12 @@ $header_role = $_SERVER['HTTP_X_USER_ROLE'] ?? '';
 $header_uid  = isset($_SERVER['HTTP_X_USER_ID']) ? (int)$_SERVER['HTTP_X_USER_ID'] : 0;
 
 // ============================================================================
-// 1. LISTAR POSTES, CONECTIVIDADE, CONSUMO E TELEMETRIA (GET)
+// 1. LISTAR POSTES, CONECTIVIDADE REAL DO ARDUINO, CONSUMO E TELEMETRIA (GET)
 // ============================================================================
 if ($metodo === 'GET') {
+    $modo_simulacao = isset($_GET['simulacao']) && $_GET['simulacao'] == '1';
+    $arduino_online = sincronizar_heartbeat_arduino($conn, $modo_simulacao);
+
     $postes = buscar_todos_postes($conn);
 
     $consumo_total_w  = 0.0;
@@ -256,7 +292,7 @@ if ($metodo === 'GET') {
     foreach ($postes as $p) {
         $consumo_total_w += $p['consumoWatts'];
         if ($p['conectado']) $online_count++;
-        if ($p['statusOperacional'] === 'EM_MANUTENCAO') {
+        if ($p['statusOperacional'] === 'EM_MANUTENCAO' || !empty($p['emManutencao'])) {
             $manutencao_count++;
         } else {
             $operando_count++;
@@ -272,7 +308,6 @@ if ($metodo === 'GET') {
     $media_bateria    = $total_postes > 0 ? round($soma_bateria / $total_postes, 1) : 0.0;
     $ldr_atual_ref    = $total_postes > 0 ? (int)($postes[0]['ldrAtual'] ?? 310) : 310;
 
-    // Se solicitado histórico recente de telemetria (?historico=1)
     $historico = [];
     if (isset($_GET['historico']) && $_GET['historico'] == '1') {
         $res_hist = mysqli_query($conn, "
@@ -301,17 +336,19 @@ if ($metodo === 'GET') {
         }
     }
 
-    // Se ?formato=array (para clientes que esperam o array direto de Torre[])
     if (isset($_GET['formato']) && $_GET['formato'] === 'array') {
         responder_json(200, $postes, $conn);
     }
 
     responder_json(200, [
         'sucesso'           => true,
+        'arduino_online'    => $arduino_online,
+        'status_conexao'    => $arduino_online ? 'ONLINE' : 'OFFLINE',
         'dispositivo'       => 'ARDUINO_MEGA_UNIFICADO',
         'portas_digitais'   => [2, 3, 4, 5, 6],
         'pwm_torres'        => implode(',', $pwm_valores),
         'resumo_telemetria' => [
+            'arduino_online'    => $arduino_online,
             'total_postes'      => $total_postes,
             'postes_online'     => $online_count,
             'postes_operando'   => $operando_count,
@@ -323,7 +360,7 @@ if ($metodo === 'GET') {
             'economia_pct'      => $economia_pct,
             'bateria_media_pct' => $media_bateria,
             'ldr_atual'         => $ldr_atual_ref,
-            'comunicacao'       => 'USB_SERIAL_DIRETA_MEGA',
+            'comunicacao'       => $arduino_online ? 'USB_SERIAL_DIRETA_MEGA' : 'DESCONECTADO',
             'timestamp_servidor'=> date('Y-m-d H:i:s'),
         ],
         'dados'             => $postes,
@@ -332,7 +369,7 @@ if ($metodo === 'GET') {
 }
 
 // ============================================================================
-// 2. ATUALIZAR INTENSIDADE PWM, ACIONAMENTO, CASCATA OU TELEMETRIA (PUT / POST)
+// 2. ATUALIZAR INTENSIDADE PWM, ACIONAMENTO, CASCATA, HEARTBEAT OU TELEMETRIA (PUT / POST)
 // ============================================================================
 if ($metodo === 'PUT' || $metodo === 'POST') {
     $corpo = json_decode(file_get_contents('php://input'), true);
@@ -343,8 +380,35 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
     $acao = strtoupper(trim($corpo['acao'] ?? ''));
 
     // ------------------------------------------------------------------------
+    // CASO ESPECIAL: Evento de Conexão / Desconexão Física do Cabo do Arduino
+    // ------------------------------------------------------------------------
+    if ($acao === 'STATUS_ARDUINO') {
+        $online_flag = !empty($corpo['online']) ? 1 : 0;
+        mysqli_begin_transaction($conn);
+
+        if ($online_flag === 0) {
+            mysqli_query($conn, "UPDATE torres SET conectado = 0, consumo_watts = 0.00");
+        } else {
+            mysqli_query($conn, "
+                UPDATE torres
+                   SET conectado = 1,
+                       consumo_watts = IF(em_manutencao = 1 OR status_operacional = 'EM_MANUTENCAO' OR nivel_brilho_atual <= 0, 0.00, ROUND((nivel_brilho_atual / 255.0) * 400.0, 2))
+            ");
+        }
+
+        mysqli_commit($conn);
+        $postes_atualizados = buscar_todos_postes($conn);
+
+        responder_json(200, [
+            'sucesso'        => true,
+            'arduino_online' => (bool)$online_flag,
+            'mensagem'       => $online_flag ? 'Arduino reconectado (Online).' : 'Arduino desconectado (Offline).',
+            'dados'          => $postes_atualizados,
+        ], $conn);
+    }
+
+    // ------------------------------------------------------------------------
     // CASO A0: Controle / Simulação de Sensores via Software (Bateria e LDR)
-    //          (Substitui o LDR e Potenciômetro físicos pelo Painel Vue.js / MySQL)
     // ------------------------------------------------------------------------
     if ($acao === 'SENSORES_VIRTUAIS') {
         $bateria_virtual  = isset($corpo['bateria']) ? max(0.0, min(100.0, (float)$corpo['bateria'])) : 92.0;
@@ -353,33 +417,36 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
 
         mysqli_begin_transaction($conn);
 
-        $res_torres = mysqli_query($conn, "SELECT id, pino_pwm, modo_iluminacao, nivel_brilho_atual, status_operacional, conectado FROM torres ORDER BY pino_pwm ASC");
+        $res_torres = mysqli_query($conn, "SELECT id, pino_pwm, modo_iluminacao, nivel_brilho_atual, status_operacional, em_manutencao, conectado FROM torres ORDER BY pino_pwm ASC");
         while ($t = mysqli_fetch_assoc($res_torres)) {
             $tid       = (int)$t['id'];
             $pino      = (int)$t['pino_pwm'];
-            $status_op = (string)$t['status_operacional'];
+            $em_manut  = ((int)$t['em_manutencao'] === 1) || ($t['status_operacional'] === 'EM_MANUTENCAO');
+            $status_op = $em_manut ? 'EM_MANUTENCAO' : 'OPERANDO';
             $conectado = (int)$t['conectado'];
             $pwm_novo  = (int)$t['nivel_brilho_atual'];
             $modo_novo = (string)$t['modo_iluminacao'];
 
-            if ($aplicar_auto && $status_op !== 'EM_MANUTENCAO' && $conectado === 1) {
+            // Se a torre está em manutenção, bloqueia alteração do PWM/modo
+            if ($em_manut) {
+                continue;
+            }
+
+            if ($aplicar_auto && $conectado === 1) {
                 if ($bateria_virtual < 5.0) {
                     $pwm_novo  = 0;
                     $modo_novo = 'DESLIGADA';
                 } elseif ($ldr_virtual >= 450) {
-                    // Luz natural alta (Dia) -> Desliga postes
                     $pwm_novo  = 0;
                     $modo_novo = 'DESLIGADA';
                 } elseif ($bateria_virtual < 25.0) {
-                    // Noite + Bateria baixa -> Modo Economia (PWM 70)
                     $pwm_novo  = 70;
                     $modo_novo = 'ECONOMIA';
                 } else {
-                    // Noite + Bateria normal -> Operação Normal (PWM 170)
                     $pwm_novo  = 170;
                     $modo_novo = 'NORMAL';
                 }
-            } elseif ($status_op === 'EM_MANUTENCAO' || $conectado === 0) {
+            } elseif ($conectado === 0) {
                 $pwm_novo = 0;
             }
 
@@ -389,6 +456,7 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
                 UPDATE torres
                    SET modo_iluminacao = ?,
                        nivel_brilho_atual = ?,
+                       pwm_antes_manutencao = ?,
                        consumo_watts = ?,
                        bateria = ?,
                        ldr_atual = ?
@@ -396,8 +464,9 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
             ");
             mysqli_stmt_bind_param(
                 $stmt_up,
-                'siddii',
+                'siiddii',
                 $modo_novo,
+                $pwm_novo,
                 $pwm_novo,
                 $consumo_w,
                 $bateria_virtual,
@@ -436,7 +505,7 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
     }
 
     // ------------------------------------------------------------------------
-    // CASO A: Recebimento de Pacote de Telemetria da Ponte IoT / Arduino Uno
+    // CASO A: Recebimento de Pacote de Telemetria da Ponte IoT / Arduino
     // ------------------------------------------------------------------------
     if ($acao === 'TELEMETRIA' || isset($corpo['torres']) || isset($corpo['postes'])) {
         $ldr_lido     = isset($corpo['ldr']) ? (int)$corpo['ldr'] : 320;
@@ -463,8 +532,7 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
             $pwm_val = max(0, min(255, $pwm_val));
             $modo    = modo_por_pwm($pwm_val);
 
-            // Verifica status operacional atual antes de atualizar
-            $stmt_sel = mysqli_prepare($conn, "SELECT status_operacional, pino_pwm FROM torres WHERE id = ?");
+            $stmt_sel = mysqli_prepare($conn, "SELECT status_operacional, em_manutencao, pino_pwm, nivel_brilho_atual, modo_iluminacao FROM torres WHERE id = ?");
             mysqli_stmt_bind_param($stmt_sel, 'i', $torre_id);
             mysqli_stmt_execute($stmt_sel);
             $res_sel = mysqli_stmt_get_result($stmt_sel);
@@ -473,11 +541,24 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
 
             if (!$atual) continue;
 
-            $status_op = $atual['status_operacional'];
+            $em_manut  = ((int)$atual['em_manutencao'] === 1) || ($atual['status_operacional'] === 'EM_MANUTENCAO');
+            $status_op = $em_manut ? 'EM_MANUTENCAO' : 'OPERANDO';
             $pino_db   = (int)$atual['pino_pwm'];
-            if ($status_op === 'EM_MANUTENCAO') {
-                $pwm_val = 0;
-                $modo    = 'DESLIGADA';
+
+            if ($em_manut) {
+                // Preserva o último brilho salvo no banco enquanto a torre está em manutenção
+                $stmt_up = mysqli_prepare($conn, "
+                    UPDATE torres
+                       SET conectado = ?,
+                           consumo_watts = 0.00,
+                           bateria = ?,
+                           ldr_atual = ?
+                     WHERE id = ?
+                ");
+                mysqli_stmt_bind_param($stmt_up, 'idii', $conectado, $bateria_lida, $ldr_lido, $torre_id);
+                mysqli_stmt_execute($stmt_up);
+                mysqli_stmt_close($stmt_up);
+                continue;
             }
 
             $consumo_w = calcular_consumo_watts($pwm_val, $status_op, $conectado);
@@ -486,6 +567,7 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
                 UPDATE torres
                    SET modo_iluminacao = ?,
                        nivel_brilho_atual = ?,
+                       pwm_antes_manutencao = ?,
                        conectado = ?,
                        consumo_watts = ?,
                        bateria = ?,
@@ -494,8 +576,9 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
             ");
             mysqli_stmt_bind_param(
                 $stmt_up,
-                'siiddii',
+                'siiiddii',
                 $modo,
+                $pwm_val,
                 $pwm_val,
                 $conectado,
                 $consumo_w,
@@ -526,14 +609,13 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
 
         responder_json(200, [
             'sucesso'  => true,
-            'mensagem' => 'Telemetria dos 5 postes (portas 8 a 12) sincronizada com sucesso.',
+            'mensagem' => 'Telemetria dos 5 postes sincronizada com sucesso.',
             'dados'    => $postes_atualizados
         ], $conn);
     }
 
     // ------------------------------------------------------------------------
-    // CASO B: Acionamento Sequencial em Cascata (Portas 8 -> 9 -> 10 -> 11 -> 12)
-    //         ou Contingência Geral (Cerração / Desligamento Geral)
+    // CASO B: Acionamento Sequencial em Cascata ou Contingência Geral
     // ------------------------------------------------------------------------
     if (in_array($acao, ['CASCATA', 'CERRACAO', 'LOTE'], true)) {
         $role_usuario = $header_role ?: ($corpo['usuario_role'] ?? 'OPERADOR');
@@ -557,17 +639,18 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
 
         mysqli_begin_transaction($conn);
 
-        $res_torres = mysqli_query($conn, "SELECT id, pino_pwm, status_operacional, conectado, bateria, ldr_atual FROM torres ORDER BY pino_pwm ASC");
+        $res_torres = mysqli_query($conn, "SELECT id, pino_pwm, status_operacional, em_manutencao, conectado, bateria, ldr_atual FROM torres ORDER BY pino_pwm ASC");
         while ($t = mysqli_fetch_assoc($res_torres)) {
             $tid       = (int)$t['id'];
             $pino      = (int)$t['pino_pwm'];
-            $status_op = (string)$t['status_operacional'];
+            $em_manut  = ((int)$t['em_manutencao'] === 1) || ($t['status_operacional'] === 'EM_MANUTENCAO');
+            $status_op = $em_manut ? 'EM_MANUTENCAO' : 'OPERANDO';
             $conectado = (int)$t['conectado'];
             $bateria   = (float)$t['bateria'];
             $ldr       = (int)$t['ldr_atual'];
 
-            // Postes em manutenção ou desconectados permanecem bloqueados em PWM 0
-            if ($status_op === 'EM_MANUTENCAO' || $conectado === 0) {
+            // Postes em manutenção ou desconectados permanecem bloqueados
+            if ($em_manut || $conectado === 0) {
                 continue;
             }
 
@@ -577,10 +660,11 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
                 UPDATE torres
                    SET modo_iluminacao = ?,
                        nivel_brilho_atual = ?,
+                       pwm_antes_manutencao = ?,
                        consumo_watts = ?
                  WHERE id = ?
             ");
-            mysqli_stmt_bind_param($stmt_up, 'sidi', $modo_req, $pwm_alvo, $consumo_w, $tid);
+            mysqli_stmt_bind_param($stmt_up, 'siidi', $modo_req, $pwm_alvo, $pwm_alvo, $consumo_w, $tid);
             mysqli_stmt_execute($stmt_up);
             mysqli_stmt_close($stmt_up);
 
@@ -607,19 +691,19 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
 
         responder_json(200, [
             'sucesso'  => true,
-            'mensagem' => "Acionamento {$acao} aplicado nas portas digitais 8 a 12 (PWM {$pwm_alvo}).",
+            'mensagem' => "Acionamento {$acao} aplicado (PWM {$pwm_alvo}).",
             'dados'    => $postes
         ], $conn);
     }
 
     // ------------------------------------------------------------------------
-    // CASO C: Atualização Individual de um Poste (Portas 8 a 12)
+    // CASO C: Atualização Individual de um Poste
     // ------------------------------------------------------------------------
     $torre_id = isset($corpo['id']) ? (int)$corpo['id'] : (isset($_GET['id']) ? (int)$_GET['id'] : 0);
     $pino_pwm = isset($corpo['pino_pwm']) ? (int)$corpo['pino_pwm'] : (isset($corpo['pinoPwm']) ? (int)$corpo['pinoPwm'] : 0);
 
     if ($torre_id <= 0 && $pino_pwm >= 2 && $pino_pwm <= 6) {
-        $torre_id = $pino_pwm - 1; // Pino PWM 2 -> ID 1 ... Pino PWM 6 -> ID 5
+        $torre_id = $pino_pwm - 1;
     }
 
     if ($torre_id <= 0) {
@@ -629,10 +713,9 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
         ], $conn);
     }
 
-    // Busca estado atual do poste no MySQL
     $stmt_busca = mysqli_prepare($conn, "
-        SELECT id, codigo, setor, pino_pwm, modo_iluminacao, nivel_brilho_atual,
-               status_operacional, conectado, consumo_watts, bateria, ldr_atual
+        SELECT id, codigo, setor, pino_pwm, modo_iluminacao, nivel_brilho_atual, pwm_antes_manutencao,
+               status_operacional, em_manutencao, conectado, consumo_watts, bateria, ldr_atual
           FROM torres
          WHERE id = ?
          LIMIT 1
@@ -647,32 +730,39 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
         responder_json(404, ['sucesso' => false, 'erro' => "Poste #{$torre_id} não encontrado."], $conn);
     }
 
-    // Status operacional e conectividade
-    $novo_status_op = isset($corpo['statusOperacional'])
-        ? strtoupper(trim($corpo['statusOperacional']))
-        : (isset($corpo['status_operacional']) ? strtoupper(trim($corpo['status_operacional'])) : $poste_atual['status_operacional']);
+    $estava_em_manut = ((int)$poste_atual['em_manutencao'] === 1) || ($poste_atual['status_operacional'] === 'EM_MANUTENCAO');
 
-    if (!in_array($novo_status_op, ['OPERANDO', 'EM_MANUTENCAO'], true)) {
-        $novo_status_op = $poste_atual['status_operacional'];
+    // Verifica se o request está alterando explicitamente o estado de manutenção
+    $mudando_status_op = isset($corpo['statusOperacional']) || isset($corpo['status_operacional']) || isset($corpo['em_manutencao']) || isset($corpo['emManutencao']);
+    if (isset($corpo['em_manutencao']) || isset($corpo['emManutencao'])) {
+        $flag_req = !empty($corpo['em_manutencao']) || !empty($corpo['emManutencao']);
+        $novo_status_op = $flag_req ? 'EM_MANUTENCAO' : 'OPERANDO';
+    } elseif (isset($corpo['statusOperacional']) || isset($corpo['status_operacional'])) {
+        $novo_status_op = strtoupper(trim($corpo['statusOperacional'] ?? $corpo['status_operacional']));
+        if (!in_array($novo_status_op, ['OPERANDO', 'EM_MANUTENCAO'], true)) {
+            $novo_status_op = $estava_em_manut ? 'EM_MANUTENCAO' : 'OPERANDO';
+        }
+    } else {
+        $novo_status_op = $estava_em_manut ? 'EM_MANUTENCAO' : 'OPERANDO';
     }
+
+    $novo_em_manut = ($novo_status_op === 'EM_MANUTENCAO') ? 1 : 0;
 
     $novo_conectado = isset($corpo['conectado'])
         ? ($corpo['conectado'] ? 1 : 0)
         : (int)$poste_atual['conectado'];
 
-    // Se a torre está EM_MANUTENCAO e o comando tenta apenas alterar brilho/modo, bloqueia com HTTP 409
+    // Bloqueia qualquer tentativa de acionamento de PWM ou relé vinda do painel se a torre estiver em manutenção
     $tentando_mudar_brilho = isset($corpo['nivelBrilhoAtual']) || isset($corpo['nivel_brilho_atual']) || isset($corpo['modoIluminacao']) || isset($corpo['modo_iluminacao']);
-    $mudando_status_op     = isset($corpo['statusOperacional']) || isset($corpo['status_operacional']);
 
-    if ($novo_status_op === 'EM_MANUTENCAO' && $tentando_mudar_brilho && !$mudando_status_op) {
+    if ($novo_em_manut === 1 && $tentando_mudar_brilho && !$mudando_status_op) {
         responder_json(409, [
             'sucesso' => false,
-            'erro'    => "O poste {$poste_atual['codigo']} (Porta D{$poste_atual['pino_pwm']}) está EM MANUTENÇÃO — acionamento remoto bloqueado."
+            'erro'    => "O poste {$poste_atual['codigo']} (Porta D{$poste_atual['pino_pwm']}) está EM MANUTENÇÃO — acionamento de PWM/relé bloqueado."
         ], $conn);
     }
 
-    // Determina novo PWM (0..255) e Modo de Iluminação
-    $tem_pwm_explicito = isset($corpo['nivelBrilhoAtual']) || isset($corpo['nivel_brilho_atual']);
+    $tem_pwm_explicito  = isset($corpo['nivelBrilhoAtual']) || isset($corpo['nivel_brilho_atual']);
     $tem_modo_explicito = isset($corpo['modoIluminacao']) || isset($corpo['modo_iluminacao']);
 
     if ($tem_pwm_explicito) {
@@ -681,13 +771,16 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
         $novo_modo = $tem_modo_explicito
             ? strtoupper(trim($corpo['modoIluminacao'] ?? $corpo['modo_iluminacao']))
             : modo_por_pwm($novo_pwm);
-        // Se o modo enviado for incompatível com PWM > 0 (ex: mandou DESLIGADA mas PWM 180 via slider), ajusta pelo PWM
         if (($novo_pwm > 0 && $novo_modo === 'DESLIGADA') || ($novo_pwm === 0 && $novo_modo !== 'DESLIGADA')) {
             $novo_modo = modo_por_pwm($novo_pwm);
         }
     } elseif ($tem_modo_explicito) {
         $novo_modo = strtoupper(trim($corpo['modoIluminacao'] ?? $corpo['modo_iluminacao']));
         $novo_pwm  = pwm_por_modo($novo_modo);
+    } elseif ($estava_em_manut && $novo_em_manut === 0) {
+        // Saindo de manutenção: recupera o último PWM anterior à manutenção
+        $novo_pwm  = (int)($poste_atual['pwm_antes_manutencao'] ?? $poste_atual['nivel_brilho_atual']);
+        $novo_modo = modo_por_pwm($novo_pwm);
     } else {
         $novo_pwm  = (int)$poste_atual['nivel_brilho_atual'];
         $novo_modo = (string)$poste_atual['modo_iluminacao'];
@@ -697,13 +790,18 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
         $novo_modo = modo_por_pwm($novo_pwm);
     }
 
-    if ($novo_status_op === 'EM_MANUTENCAO') {
-        $novo_pwm = 0;
+    // Preserva pwm_antes_manutencao quando entra ou opera normalmente
+    $novo_pwm_antes_manut = (int)($poste_atual['pwm_antes_manutencao'] ?? 170);
+    if (!$estava_em_manut && $novo_em_manut === 1) {
+        $novo_pwm_antes_manut = (int)$poste_atual['nivel_brilho_atual'];
+    } elseif ($novo_em_manut === 0) {
+        $novo_pwm_antes_manut = $novo_pwm;
     }
 
-    $novo_consumo_w = calcular_consumo_watts($novo_pwm, $novo_status_op, $novo_conectado);
-    $nova_bateria   = isset($corpo['bateria']) ? (float)$corpo['bateria'] : (float)$poste_atual['bateria'];
-    $novo_ldr       = isset($corpo['ldr_atual']) ? (int)$corpo['ldr_atual'] : (int)$poste_atual['ldr_atual'];
+    $pwm_para_consumo = ($novo_em_manut === 1) ? 0 : $novo_pwm;
+    $novo_consumo_w   = calcular_consumo_watts($pwm_para_consumo, $novo_status_op, $novo_conectado);
+    $nova_bateria     = isset($corpo['bateria']) ? (float)$corpo['bateria'] : (float)$poste_atual['bateria'];
+    $novo_ldr         = isset($corpo['ldr_atual']) ? (int)$corpo['ldr_atual'] : (int)$poste_atual['ldr_atual'];
 
     mysqli_begin_transaction($conn);
 
@@ -711,7 +809,9 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
         UPDATE torres
            SET modo_iluminacao = ?,
                nivel_brilho_atual = ?,
+               pwm_antes_manutencao = ?,
                status_operacional = ?,
+               em_manutencao = ?,
                conectado = ?,
                consumo_watts = ?,
                bateria = ?,
@@ -726,10 +826,12 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
 
     mysqli_stmt_bind_param(
         $stmt_update,
-        'sisiddii',
+        'siisiiidii',
         $novo_modo,
         $novo_pwm,
+        $novo_pwm_antes_manut,
         $novo_status_op,
+        $novo_em_manut,
         $novo_conectado,
         $novo_consumo_w,
         $nova_bateria,
@@ -749,7 +851,7 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
         $conn,
         $torre_id,
         (int)$poste_atual['pino_pwm'],
-        $novo_pwm,
+        $pwm_para_consumo,
         $novo_modo,
         $novo_status_op,
         $novo_conectado,
@@ -761,10 +863,9 @@ if ($metodo === 'PUT' || $metodo === 'POST') {
 
     mysqli_commit($conn);
 
-    // Retorna o registro atualizado
     $stmt_final = mysqli_prepare($conn, "
-        SELECT id, codigo, setor, pino_pwm, modo_iluminacao, nivel_brilho_atual,
-               status_operacional, conectado, consumo_watts, bateria, ldr_atual, atualizado_em
+        SELECT id, codigo, setor, pino_pwm, modo_iluminacao, nivel_brilho_atual, pwm_antes_manutencao,
+               status_operacional, em_manutencao, conectado, consumo_watts, bateria, ldr_atual, atualizado_em
           FROM torres
          WHERE id = ?
          LIMIT 1

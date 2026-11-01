@@ -1,9 +1,14 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   USUARIOS_PADRAO,
   autenticarLocalmente,
+  clearFirstAccessFlag,
+  currentUser,
+  getCurrentUser,
+  logoutSession,
+  mustChangePassword,
   setAuthSession,
   type AuthUser,
   type UserRole,
@@ -11,8 +16,12 @@ import {
 import { PHP_API_BASE_URL } from '@/services/api'
 
 const router = useRouter()
+const route = useRoute()
 const AUTH_ENDPOINT = '/api/auth/login'
 const PHP_AUTH_ENDPOINT = `${PHP_API_BASE_URL}/login.php`
+
+type ModoTelaAuth = 'LOGIN' | 'PRIMEIRO_ACESSO' | 'RECUPERAR'
+const modoTela = ref<ModoTelaAuth>('LOGIN')
 
 const form = reactive({
   username: '',
@@ -20,9 +29,49 @@ const form = reactive({
   remember: false,
 })
 
+/* Estado: Forçar Troca de Senha no Primeiro Acesso */
+const formPrimeiroAcesso = reactive({
+  novaSenha: '',
+  confirmarSenha: '',
+})
+
+/* Estado: Esqueci a Senha (Solicitação e Confirmação via Token/Link Temporário) */
+const formReset = reactive({
+  identificador: '',
+  token: '',
+  novaSenha: '',
+  confirmarSenha: '',
+  tokenGerado: '',
+  linkTemporario: '',
+  etapaConfirmacao: false,
+})
+
 const showPassword = ref(false)
 const loading = ref(false)
 const errorMessage = ref('')
+const successMessage = ref('')
+
+function sincronizarModoComRota() {
+  const tokenQuery = typeof route.query.reset_token === 'string' ? route.query.reset_token : ''
+  const userQuery = typeof route.query.user === 'string' ? route.query.user : ''
+
+  if (tokenQuery) {
+    modoTela.value = 'RECUPERAR'
+    formReset.token = tokenQuery.toUpperCase()
+    if (userQuery) formReset.identificador = userQuery
+    formReset.etapaConfirmacao = true
+    return
+  }
+
+  if (route.name === 'primeiro-acesso' || mustChangePassword()) {
+    modoTela.value = 'PRIMEIRO_ACESSO'
+  } else {
+    modoTela.value = 'LOGIN'
+  }
+}
+
+onMounted(sincronizarModoComRota)
+watch(() => [route.name, route.query.reset_token], sincronizarModoComRota)
 
 function normalizarRespostaServidor(data: any): AuthUser | null {
   const roleStr = String(data?.role ?? '').toUpperCase() as UserRole
@@ -30,17 +79,23 @@ function normalizarRespostaServidor(data: any): AuthUser | null {
     return null
   }
   const base = USUARIOS_PADRAO[roleStr]
+  const flagPrimeiro = Boolean(data?.primeiro_acesso === true || data?.primeiroAcesso === true || Number(data?.primeiro_acesso) === 1)
   return {
     id: typeof data?.id === 'number' ? data.id : base.id,
     username: String(data?.username ?? base.username),
     nome: String(data?.nome ?? base.nome),
+    email: data?.email ? String(data.email) : base.email,
+    matricula: data?.matricula ? String(data.matricula) : base.matricula,
     cargo: String(data?.cargo ?? base.cargo),
     role: roleStr,
+    primeiro_acesso: flagPrimeiro,
+    primeiroAcesso: flagPrimeiro,
   }
 }
 
 async function handleLogin() {
   errorMessage.value = ''
+  successMessage.value = ''
   const username = form.username.trim()
   const password = form.password.trim()
 
@@ -53,12 +108,12 @@ async function handleLogin() {
   try {
     let usuarioAutenticado: AuthUser | null = null
 
-    // 1. Valida credenciais no Backend PHP/MySQL (/login.php)
+    // 1. Valida credenciais prioritariamente no Backend PHP/MySQL (/login.php)
     try {
       const resPhp = await fetch(PHP_AUTH_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ acao: 'LOGIN', username, password }),
       })
       if (resPhp.ok) {
         const jsonPhp = await resPhp.json()
@@ -95,19 +150,189 @@ async function handleLogin() {
       }
     }
 
-    // 3. Fallback de validação estrita das credenciais digitadas manualmente
+    // 3. Fallback local caso servidores estejam offline
     if (!usuarioAutenticado) {
       usuarioAutenticado = autenticarLocalmente(username, password)
     }
 
     if (usuarioAutenticado) {
       setAuthSession(usuarioAutenticado, form.remember)
-      await router.replace({ name: 'dashboard' })
+      if (usuarioAutenticado.primeiroAcesso || usuarioAutenticado.primeiro_acesso) {
+        modoTela.value = 'PRIMEIRO_ACESSO'
+        await router.replace({ name: 'primeiro-acesso' })
+      } else {
+        await router.replace({ name: 'dashboard' })
+      }
     } else {
       errorMessage.value = 'Usuário ou senha incorretos.'
     }
   } catch {
     errorMessage.value = 'Erro ao conectar com o servidor.'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function handleDefinirNovaSenhaPrimeiroAcesso() {
+  errorMessage.value = ''
+  successMessage.value = ''
+
+  const nova = formPrimeiroAcesso.novaSenha.trim()
+  const conf = formPrimeiroAcesso.confirmarSenha.trim()
+
+  if (nova.length < 4) {
+    errorMessage.value = 'A nova senha deve possuir pelo menos 4 caracteres.'
+    return
+  }
+  if (nova !== conf) {
+    errorMessage.value = 'A confirmação de senha não confere.'
+    return
+  }
+
+  const usr = currentUser.value ?? getCurrentUser()
+  loading.value = true
+  try {
+    const res = await fetch(PHP_AUTH_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        acao: 'DEFINIR_NOVA_SENHA',
+        usuario_id: usr.id,
+        username: usr.username,
+        nova_senha: nova,
+      }),
+    })
+    const json = await res.json()
+    if (!res.ok || !json?.sucesso) {
+      errorMessage.value = json?.erro || 'Não foi possível salvar a nova senha.'
+      return
+    }
+
+    clearFirstAccessFlag()
+    formPrimeiroAcesso.novaSenha = ''
+    formPrimeiroAcesso.confirmarSenha = ''
+    await router.replace({ name: 'dashboard' })
+  } catch {
+    errorMessage.value = 'Erro ao comunicar com o servidor de autenticação.'
+  } finally {
+    loading.value = false
+  }
+}
+
+function cancelarPrimeiroAcesso() {
+  logoutSession()
+  modoTela.value = 'LOGIN'
+  router.replace({ name: 'login' })
+}
+
+function abrirEsqueciSenha() {
+  errorMessage.value = ''
+  successMessage.value = ''
+  formReset.identificador = form.username.trim()
+  formReset.token = ''
+  formReset.novaSenha = ''
+  formReset.confirmarSenha = ''
+  formReset.tokenGerado = ''
+  formReset.linkTemporario = ''
+  formReset.etapaConfirmacao = false
+  modoTela.value = 'RECUPERAR'
+}
+
+function voltarAoLogin() {
+  errorMessage.value = ''
+  successMessage.value = ''
+  modoTela.value = 'LOGIN'
+  if (route.query.reset_token) {
+    router.replace({ name: 'login', query: {} })
+  }
+}
+
+async function handleSolicitarTokenReset() {
+  errorMessage.value = ''
+  successMessage.value = ''
+
+  const id = formReset.identificador.trim()
+  if (!id) {
+    errorMessage.value = 'Informe seu usuário, matrícula ou e-mail.'
+    return
+  }
+
+  loading.value = true
+  try {
+    const res = await fetch(PHP_AUTH_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        acao: 'SOLICITAR_RESET',
+        identificador: id,
+      }),
+    })
+    const json = await res.json()
+    if (!res.ok || !json?.sucesso) {
+      errorMessage.value = json?.erro || 'Usuário não encontrado para recuperação.'
+      return
+    }
+
+    formReset.tokenGerado = String(json.token_reset ?? '')
+    formReset.linkTemporario = String(json.link_temporario ?? '')
+    formReset.token = formReset.tokenGerado
+    formReset.etapaConfirmacao = true
+    successMessage.value = json.mensagem || 'Token de recuperação gerado com sucesso.'
+  } catch {
+    errorMessage.value = 'Falha ao conectar com o servidor para recuperação de senha.'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function handleConfirmarResetSenha() {
+  errorMessage.value = ''
+  successMessage.value = ''
+
+  const token = formReset.token.trim().toUpperCase()
+  const nova = formReset.novaSenha.trim()
+  const conf = formReset.confirmarSenha.trim()
+
+  if (!token) {
+    errorMessage.value = 'Informe o token de recuperação.'
+    return
+  }
+  if (nova.length < 4) {
+    errorMessage.value = 'A nova senha deve possuir no mínimo 4 caracteres.'
+    return
+  }
+  if (nova !== conf) {
+    errorMessage.value = 'As senhas informadas não conferem.'
+    return
+  }
+
+  loading.value = true
+  try {
+    const res = await fetch(PHP_AUTH_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        acao: 'CONFIRMAR_RESET',
+        identificador: formReset.identificador.trim(),
+        token,
+        nova_senha: nova,
+      }),
+    })
+    const json = await res.json()
+    if (!res.ok || !json?.sucesso) {
+      errorMessage.value = json?.erro || 'Token inválido ou expirado.'
+      return
+    }
+
+    form.username = json.username || formReset.identificador.trim()
+    form.password = ''
+    modoTela.value = 'LOGIN'
+    if (route.query.reset_token) {
+      await router.replace({ name: 'login', query: {} })
+    }
+    successMessage.value = json.mensagem || 'Senha redefinida com sucesso! Entre com sua nova senha.'
+  } catch {
+    errorMessage.value = 'Falha ao redefinir a senha no servidor.'
   } finally {
     loading.value = false
   }
@@ -138,7 +363,7 @@ async function handleLogin() {
         <div class="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/50 to-transparent"></div>
 
         <!-- Logotipo GEONEX -->
-        <div class="text-center mb-8 pt-2">
+        <div class="text-center mb-6 pt-2">
           <img
             src="/assets/geonex-full.svg"
             alt="GEONEX - Mining Lighting Control"
@@ -146,7 +371,10 @@ async function handleLogin() {
           />
         </div>
 
-        <form @submit.prevent="handleLogin" class="space-y-5">
+        <!-- ================================================================
+             MODO 1: TELA DE LOGIN PADRÃO
+             ================================================================ -->
+        <form v-if="modoTela === 'LOGIN'" @submit.prevent="handleLogin" class="space-y-5">
           <!-- Campo Usuário / ID -->
           <div class="space-y-1.5">
             <label class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Usuário / ID</label>
@@ -190,10 +418,16 @@ async function handleLogin() {
               <input v-model="form.remember" type="checkbox" class="rounded border-zinc-700 bg-black text-[#FF6B00] focus:ring-[#FF6B00]" />
               Lembrar-me
             </label>
-            <a href="#" @click.prevent class="hover:text-white transition-colors">Esqueci a senha</a>
+            <button
+              type="button"
+              @click="abrirEsqueciSenha"
+              class="hover:text-white transition-colors"
+            >
+              Esqueci a senha
+            </button>
           </div>
 
-          <!-- Botão de Entrar (Laranja GEONEX com Sombra Neon Suave) -->
+          <!-- Botão de Entrar -->
           <button
             type="submit"
             :disabled="loading"
@@ -202,9 +436,175 @@ async function handleLogin() {
             {{ loading ? 'Autenticando...' : 'ACESSAR SISTEMA' }}
           </button>
 
-          <!-- Mensagem de Erro -->
           <p v-if="errorMessage" class="text-center text-xs text-red-400 pt-2 font-medium">{{ errorMessage }}</p>
+          <p v-if="successMessage" class="text-center text-xs text-emerald-400 pt-2 font-medium">{{ successMessage }}</p>
         </form>
+
+        <!-- ================================================================
+             MODO 2: DEFINIR NOVA SENHA OBRIGATÓRIA (PRIMEIRO ACESSO)
+             ================================================================ -->
+        <form v-else-if="modoTela === 'PRIMEIRO_ACESSO'" @submit.prevent="handleDefinirNovaSenhaPrimeiroAcesso" class="space-y-4">
+          <div class="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+            <strong class="block uppercase tracking-wider text-[#FF8533]">Primeiro Acesso Detectado</strong>
+            <span class="mt-1 block text-zinc-300">
+              Olá, <strong>{{ currentUser?.nome }}</strong>. Defina uma nova senha pessoal para liberar o acesso ao sistema SCADA.
+            </span>
+          </div>
+
+          <div class="space-y-1.5">
+            <label class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Nova Senha</label>
+            <input
+              v-model="formPrimeiroAcesso.novaSenha"
+              :type="showPassword ? 'text' : 'password'"
+              required
+              minlength="4"
+              autocomplete="new-password"
+              placeholder="Digite sua nova senha"
+              class="w-full h-11 px-4 rounded-xl bg-black/70 border border-zinc-800 text-white placeholder-zinc-600 outline-none transition-all focus:border-[#FF6B00] focus:ring-1 focus:ring-[#FF6B00]"
+            />
+          </div>
+
+          <div class="space-y-1.5">
+            <label class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Confirmar Nova Senha</label>
+            <input
+              v-model="formPrimeiroAcesso.confirmarSenha"
+              :type="showPassword ? 'text' : 'password'"
+              required
+              minlength="4"
+              autocomplete="new-password"
+              placeholder="Repita a nova senha"
+              class="w-full h-11 px-4 rounded-xl bg-black/70 border border-zinc-800 text-white placeholder-zinc-600 outline-none transition-all focus:border-[#FF6B00] focus:ring-1 focus:ring-[#FF6B00]"
+            />
+          </div>
+
+          <button
+            type="submit"
+            :disabled="loading"
+            class="w-full h-12 rounded-xl bg-gradient-to-b from-[#FF8533] to-[#E65100] hover:from-[#FF6B00] hover:to-[#CC4800] text-white font-bold tracking-wide shadow-[0_0_20px_rgba(255,107,0,0.35)] transition-all active:scale-[0.98] disabled:opacity-50"
+          >
+            {{ loading ? 'Salvando...' : 'DEFINIR NOVA SENHA' }}
+          </button>
+
+          <button
+            type="button"
+            class="w-full text-center text-xs text-zinc-400 hover:text-white transition-colors"
+            @click="cancelarPrimeiroAcesso"
+          >
+            Sair e voltar para o login
+          </button>
+
+          <p v-if="errorMessage" class="text-center text-xs text-red-400 pt-1 font-medium">{{ errorMessage }}</p>
+        </form>
+
+        <!-- ================================================================
+             MODO 3: RECUPERAÇÃO DE SENHA (ESQUECI A SENHA)
+             ================================================================ -->
+        <div v-else class="space-y-4">
+          <div class="flex items-center justify-between border-b border-white/10 pb-2">
+            <span class="text-xs font-bold uppercase tracking-wider text-[#FF8533]">
+              Recuperação de Senha
+            </span>
+            <button
+              type="button"
+              class="text-xs text-zinc-400 hover:text-white"
+              @click="voltarAoLogin"
+            >
+              Voltar ao Login
+            </button>
+          </div>
+
+          <!-- Etapa 1: Gerar Token / Link Temporário -->
+          <form v-if="!formReset.etapaConfirmacao" @submit.prevent="handleSolicitarTokenReset" class="space-y-4">
+            <p class="text-xs text-zinc-400">
+              Informe seu login, matrícula ou e-mail para gerar um token/link temporário de redefinição.
+            </p>
+
+            <div class="space-y-1.5">
+              <label class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+                Usuário / Matrícula / E-mail
+              </label>
+              <input
+                v-model="formReset.identificador"
+                type="text"
+                required
+                placeholder="Ex.: adm, operador, ADM-001"
+                class="w-full h-11 px-4 rounded-xl bg-black/70 border border-zinc-800 text-white placeholder-zinc-600 outline-none transition-all focus:border-[#FF6B00] focus:ring-1 focus:ring-[#FF6B00]"
+              />
+            </div>
+
+            <button
+              type="submit"
+              :disabled="loading"
+              class="w-full h-11 rounded-xl bg-gradient-to-b from-[#FF8533] to-[#E65100] hover:from-[#FF6B00] hover:to-[#CC4800] text-white text-xs font-bold uppercase tracking-wider shadow-[0_0_20px_rgba(255,107,0,0.35)] transition-all disabled:opacity-50"
+            >
+              {{ loading ? 'Gerando...' : 'Gerar Token de Recuperação' }}
+            </button>
+          </form>
+
+          <!-- Etapa 2: Informar Token e Nova Senha -->
+          <form v-else @submit.prevent="handleConfirmarResetSenha" class="space-y-3.5">
+            <div
+              v-if="formReset.tokenGerado"
+              class="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-[11px] text-emerald-300"
+            >
+              <div>Token temporário gerado: <strong class="font-mono text-white">{{ formReset.tokenGerado }}</strong></div>
+              <a
+                v-if="formReset.linkTemporario"
+                :href="formReset.linkTemporario"
+                class="mt-1 inline-block underline text-amber-300 hover:text-white"
+                @click.prevent="formReset.token = formReset.tokenGerado"
+              >
+                Link temporário: {{ formReset.linkTemporario }}
+              </a>
+            </div>
+
+            <div class="space-y-1">
+              <label class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Token de Reset</label>
+              <input
+                v-model="formReset.token"
+                type="text"
+                required
+                placeholder="Código de 6 dígitos"
+                class="w-full h-10 px-3 rounded-xl bg-black/70 border border-zinc-800 font-mono uppercase text-white outline-none focus:border-[#FF6B00]"
+              />
+            </div>
+
+            <div class="space-y-1">
+              <label class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Nova Senha</label>
+              <input
+                v-model="formReset.novaSenha"
+                :type="showPassword ? 'text' : 'password'"
+                required
+                minlength="4"
+                placeholder="Digite a nova senha"
+                class="w-full h-10 px-3 rounded-xl bg-black/70 border border-zinc-800 text-white outline-none focus:border-[#FF6B00]"
+              />
+            </div>
+
+            <div class="space-y-1">
+              <label class="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Confirmar Nova Senha</label>
+              <input
+                v-model="formReset.confirmarSenha"
+                :type="showPassword ? 'text' : 'password'"
+                required
+                minlength="4"
+                placeholder="Confirme a nova senha"
+                class="w-full h-10 px-3 rounded-xl bg-black/70 border border-zinc-800 text-white outline-none focus:border-[#FF6B00]"
+              />
+            </div>
+
+            <button
+              type="submit"
+              :disabled="loading"
+              class="w-full h-11 rounded-xl bg-gradient-to-b from-[#FF8533] to-[#E65100] hover:from-[#FF6B00] hover:to-[#CC4800] text-white text-xs font-bold uppercase tracking-wider shadow-[0_0_20px_rgba(255,107,0,0.35)] transition-all disabled:opacity-50"
+            >
+              {{ loading ? 'Salvando...' : 'Confirmar Nova Senha' }}
+            </button>
+          </form>
+
+          <p v-if="errorMessage" class="text-center text-xs text-red-400 pt-1 font-medium">{{ errorMessage }}</p>
+          <p v-if="successMessage" class="text-center text-xs text-emerald-400 pt-1 font-medium">{{ successMessage }}</p>
+        </div>
       </div>
     </main>
   </div>

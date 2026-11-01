@@ -16,7 +16,11 @@ export interface Torre {
   pinoPwm: number // Portas PWM sequenciais do Arduino Mega: 2, 3, 4, 5 e 6
   modoIluminacao: ModoIluminacao
   nivelBrilhoAtual: number // 0..255
+  pwmAntesManutencao?: number // Último PWM salvo antes da manutenção
+  pwm_antes_manutencao?: number
   statusOperacional: StatusOperacional
+  emManutencao?: boolean // Flag booleana de bloqueio de manutenção (OS)
+  em_manutencao?: boolean
   conectado?: boolean // Status de conectividade em tempo real do poste
   consumoWatts?: number // Consumo instantâneo em Watts (0..400W)
   bateria?: number // % de carga do nobreak (telemetria)

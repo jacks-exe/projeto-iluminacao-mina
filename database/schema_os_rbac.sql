@@ -18,11 +18,15 @@ USE mina_iot_db;
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS usuarios (
     id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(60) NULL UNIQUE,
     nome VARCHAR(100) NOT NULL,
     email VARCHAR(120) NOT NULL UNIQUE,
     matricula VARCHAR(30) NOT NULL UNIQUE,
     senha_hash VARCHAR(255) NOT NULL,
     role ENUM('ADMIN', 'OPERADOR', 'TECNICO') NOT NULL DEFAULT 'OPERADOR',
+    primeiro_acesso TINYINT(1) NOT NULL DEFAULT 0,
+    reset_token VARCHAR(128) NULL DEFAULT NULL,
+    reset_expira_em DATETIME NULL DEFAULT NULL,
     ativo TINYINT(1) NOT NULL DEFAULT 1,
     criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -37,7 +41,9 @@ CREATE TABLE IF NOT EXISTS torres (
     pino_pwm INT NOT NULL COMMENT 'Portas digitais sequenciais Arduino Uno: 8, 9, 10, 11 e 12',
     modo_iluminacao ENUM('DESLIGADA', 'ECONOMIA', 'NORMAL', 'CERRACAO') NOT NULL DEFAULT 'NORMAL',
     nivel_brilho_atual TINYINT UNSIGNED NOT NULL DEFAULT 170 COMMENT 'Valor PWM 0..255',
+    pwm_antes_manutencao TINYINT UNSIGNED NOT NULL DEFAULT 170 COMMENT 'Último PWM salvo antes de entrar em manutenção',
     status_operacional ENUM('OPERANDO', 'EM_MANUTENCAO') NOT NULL DEFAULT 'OPERANDO',
+    em_manutencao TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1 = Em manutenção (bloqueado), 0 = Operando',
     conectado TINYINT(1) NOT NULL DEFAULT 1 COMMENT '1 = Online, 0 = Offline',
     consumo_watts DECIMAL(7,2) NOT NULL DEFAULT 266.67 COMMENT 'Consumo instantâneo calculado (0..400W)',
     bateria DECIMAL(5,2) NOT NULL DEFAULT 92.00 COMMENT 'Carga do nobreak/UPS (%)',
@@ -109,22 +115,23 @@ CREATE TABLE IF NOT EXISTS ordens_servico (
 
 -- Senha padrão de teste para todos (hash bcrypt de 'geonex123'):
 -- $2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi
-INSERT INTO usuarios (id, nome, email, matricula, senha_hash, role) VALUES
-(1, 'Eng. Carlos Mendes', 'carlos.admin@geonex.com.br', 'ADM-001', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'ADMIN'),
-(2, 'Marcos Souza (CCO)', 'marcos.cco@geonex.com.br',   'OPR-104', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'OPERADOR'),
-(3, 'Roberto Lima',       'roberto.tec@geonex.com.br',  'TEC-208', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'TECNICO'),
-(4, 'Fernanda Alves',     'fernanda.tec@geonex.com.br', 'TEC-215', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'TECNICO')
-ON DUPLICATE KEY UPDATE nome = VALUES(nome);
+INSERT INTO usuarios (id, username, nome, email, matricula, senha_hash, role, primeiro_acesso) VALUES
+(1, 'adm',          'Eng. Carlos Mendes', 'carlos.admin@geonex.com.br', 'ADM-001', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'ADMIN',    0),
+(2, 'operador',     'Marcos Souza (CCO)', 'marcos.cco@geonex.com.br',   'OPR-104', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'OPERADOR', 0),
+(3, 'tecnico',      'Roberto Lima',       'roberto.tec@geonex.com.br',  'TEC-208', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'TECNICO',  0),
+(4, 'fernanda.tec', 'Fernanda Alves',     'fernanda.tec@geonex.com.br', 'TEC-215', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'TECNICO',  0)
+ON DUPLICATE KEY UPDATE nome = VALUES(nome), username = VALUES(username);
 
 -- 5 Postes de Iluminação nas 5 portas PWM sequenciais do Arduino Mega: 2, 3, 4, 5 e 6
-INSERT INTO torres (id, codigo, setor, pino_pwm, modo_iluminacao, nivel_brilho_atual, status_operacional, conectado, consumo_watts, bateria, ldr_atual) VALUES
-(1, 'TR-01', 'Setor Norte - Lavra A',  2,  'NORMAL',    170, 'OPERANDO',      1, 266.67, 94.00, 310),
-(2, 'TR-02', 'Setor Norte - Lavra A',  3,  'NORMAL',    170, 'OPERANDO',      1, 266.67, 89.50, 310),
-(3, 'TR-03', 'Setor Leste - Rampa B',  4,  'ECONOMIA',   70, 'EM_MANUTENCAO', 1,   0.00, 78.00, 310),
-(4, 'TR-04', 'Setor Oeste - Britagem', 5,  'DESLIGADA',   0, 'OPERANDO',      1,   0.00, 97.00, 310),
-(5, 'TR-05', 'Setor Leste - Rampa B',  6,  'NORMAL',    170, 'OPERANDO',      1, 266.67, 91.00, 310)
+INSERT INTO torres (id, codigo, setor, pino_pwm, modo_iluminacao, nivel_brilho_atual, pwm_antes_manutencao, status_operacional, em_manutencao, conectado, consumo_watts, bateria, ldr_atual) VALUES
+(1, 'TR-01', 'Setor Norte - Lavra A',  2,  'NORMAL',    170, 170, 'OPERANDO',      0, 1, 266.67, 94.00, 310),
+(2, 'TR-02', 'Setor Norte - Lavra A',  3,  'NORMAL',    170, 170, 'OPERANDO',      0, 1, 266.67, 89.50, 310),
+(3, 'TR-03', 'Setor Leste - Rampa B',  4,  'ECONOMIA',   70,  70, 'EM_MANUTENCAO', 1, 1,   0.00, 78.00, 310),
+(4, 'TR-04', 'Setor Oeste - Britagem', 5,  'DESLIGADA',   0,   0, 'OPERANDO',      0, 1,   0.00, 97.00, 310),
+(5, 'TR-05', 'Setor Leste - Rampa B',  6,  'NORMAL',    170, 170, 'OPERANDO',      0, 1, 266.67, 91.00, 310)
 ON DUPLICATE KEY UPDATE
     pino_pwm = VALUES(pino_pwm),
+    em_manutencao = VALUES(em_manutencao),
     conectado = VALUES(conectado),
     consumo_watts = VALUES(consumo_watts),
     bateria = VALUES(bateria);

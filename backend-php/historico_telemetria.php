@@ -463,6 +463,47 @@ if ($metodo === 'POST') {
         $pwm_val = max(0, min(255, $pwm_val));
         $modo    = ($pwm_val <= 0) ? 'DESLIGADA' : (($pwm_val <= 120) ? 'ECONOMIA' : (($pwm_val <= 212) ? 'NORMAL' : 'CERRACAO'));
 
+        // Verifica se a torre está em manutenção para não sobrescrever o PWM salvo nem acionar
+        $stmt_t = mysqli_prepare($conn, "SELECT status_operacional, em_manutencao FROM torres WHERE id = ? LIMIT 1");
+        $em_manut = false;
+        if ($stmt_t) {
+            mysqli_stmt_bind_param($stmt_t, 'i', $torre_id);
+            mysqli_stmt_execute($stmt_t);
+            $res_t = mysqli_stmt_get_result($stmt_t);
+            if ($row_t = mysqli_fetch_assoc($res_t)) {
+                $em_manut = ((int)($row_t['em_manutencao'] ?? 0) === 1) || ($row_t['status_operacional'] === 'EM_MANUTENCAO');
+            }
+            mysqli_stmt_close($stmt_t);
+        }
+
+        if ($em_manut) {
+            $stmt_up_m = mysqli_prepare($conn, "UPDATE torres SET conectado = ?, consumo_watts = 0.00, bateria = ?, ldr_atual = ? WHERE id = ?");
+            if ($stmt_up_m) {
+                mysqli_stmt_bind_param($stmt_up_m, 'idii', $conectado, $bateria_lida, $ldr_lido, $torre_id);
+                mysqli_stmt_execute($stmt_up_m);
+                mysqli_stmt_close($stmt_up_m);
+            }
+            continue;
+        }
+
+        $consumo_w_atual = ($conectado === 0 || $pwm_val <= 0) ? 0.0 : round(($pwm_val / 255.0) * POTENCIA_MAX_POSTE_W, 2);
+        $stmt_up_t = mysqli_prepare($conn, "
+            UPDATE torres
+               SET modo_iluminacao = ?,
+                   nivel_brilho_atual = ?,
+                   pwm_antes_manutencao = ?,
+                   conectado = ?,
+                   consumo_watts = ?,
+                   bateria = ?,
+                   ldr_atual = ?
+             WHERE id = ?
+        ");
+        if ($stmt_up_t) {
+            mysqli_stmt_bind_param($stmt_up_t, 'siiiddii', $modo, $pwm_val, $pwm_val, $conectado, $consumo_w_atual, $bateria_lida, $ldr_lido, $torre_id);
+            mysqli_stmt_execute($stmt_up_t);
+            mysqli_stmt_close($stmt_up_t);
+        }
+
         // Verifica o último registro gravado para este poste para deduplicar leituras idênticas
         $stmt_ult = mysqli_prepare($conn, "
             SELECT nivel_pwm, conectado, TIMESTAMPDIFF(SECOND, registrado_em, NOW()) AS segs

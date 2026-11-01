@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { PINOS_POSTES, pwmToPercent } from '@/config/scada'
+import { ref } from 'vue'
+import { PINOS_POSTES } from '@/config/scada'
 import type { Torre } from '@/types/scada'
 
 const props = defineProps<{
@@ -15,13 +16,20 @@ const emit = defineEmits<{
   (e: 'toggle-power', torre: Torre): void
 }>()
 
+// Proporção real da maquete: o palco se ajusta ao espaço disponível sem cortar as torres das extremidades
+const mapRatio = ref(16 / 9)
+function onBaseLoad(e: Event) {
+  const img = e.target as HTMLImageElement
+  if (img.naturalWidth && img.naturalHeight) mapRatio.value = img.naturalWidth / img.naturalHeight
+}
+
 // Coordenadas calibradas e definitivas sobre a maquete
 const coordenadasFixas: Record<number, { x: number; y: number }> = {
-  1: { x: 52, y: 6 },
-  2: { x: 36, y: 12 },
-  3: { x: 65, y: 12 },
-  4: { x: 22, y: 40 },
-  5: { x: 72, y: 40 },
+  1: { x: 52, y: 8 },
+  2: { x: 31, y: 22 },
+  3: { x: 70, y: 20 },
+  4: { x: 19, y: 40 },
+  5: { x: 76, y: 35 },
 }
 
 function getNumericId(torre: any, index?: number): number {
@@ -100,64 +108,30 @@ function isLightVisible(torre: Torre): boolean {
 </script>
 
 <template>
-  <div class="map-container">
-    <!-- 1. Imagem Base (Mina totalmente apagada) -->
-    <img
-      src="/assets/mina-base.png"
-      alt="Maquete Base"
-      class="map-image base-layer"
-    />
+  <!-- Bento card do Gêmeo Digital: fundo sólido #13151E, centralizado e sem cortes secos -->
+  <div class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-3xl border border-white/8 bg-[#13151E] p-2">
+    <div class="map-container">
+      <div class="map-stage" :style="{ '--ar': mapRatio }">
+        <!-- 1. Imagem Base (Mina) integrada ao fundo #13151E com Radial Fade Mask Próprio (SEM mix-blend-screen) -->
+        <img
+          src="/assets/mina-base.png"
+          alt="Maquete Base do Gêmeo Digital"
+          @load="onBaseLoad"
+          class="map-image base-layer w-full h-full object-contain transform origin-center scale-[1.4] transition-transform duration-300 mask-fade-base"
+        />
 
-    <!-- 2. Camada do Feixe Isolado da Torre (luz-fx-X.png) com opacidade contínua PWM -->
-    <img
-      v-for="(torre, idx) in torres"
-      :key="'beam-' + getNumericId(torre, idx)"
-      v-show="isLightVisible(torre)"
-      :src="`/assets/luz-torre-${getNumericId(torre, idx)}.png`"
-      alt=""
-      class="map-image light-layer"
-      :style="{ opacity: getOpacity(torre) }"
-    />
-
-    <!-- 3. HUD Superior Esquerdo: Status de Conectividade em Tempo Real (Pinos PWM 2 a 6) -->
-    <div class="telemetry-hud">
-      <div class="hud-title">
-        <span class="hud-dot" :class="{ online: online }" />
-        <span>ARDUINO MEGA · PINOS PWM 2–6</span>
-      </div>
-      <div class="hud-poles">
-        <button
+        <!-- 2. Camada do Feixe Isolado da Torre com opacidade contínua PWM, Screen + Radial Fade Mask -->
+        <img
           v-for="(torre, idx) in torres"
-          :key="'hud-' + getNumericId(torre, idx)"
-          type="button"
-          class="hud-pole-chip"
-          :class="{
-            selected: torre.id === selectedId,
-            offline: !isConectado(torre),
-            manut: isEmManutencao(torre),
-            lit: isLightVisible(torre),
-          }"
-          :title="`${torre.codigo} (Porta D${getPinoDigital(torre, idx)}) — Clique para selecionar, duplo clique para Ligar/Desligar`"
-          @click="emit('select-node', torre.id)"
-          @dblclick.stop="emit('toggle-power', torre)"
-        >
-          <span class="chip-status-dot" />
-          <span class="chip-code">{{ torre.codigo }}</span>
-          <span class="chip-pin">D{{ getPinoDigital(torre, idx) }}</span>
-          <span class="chip-pwm">
-            {{
-              !isConectado(torre)
-                ? 'OFFLINE'
-                : isEmManutencao(torre)
-                  ? 'MANUT'
-                  : `${pwmToPercent(getPwm(torre))}%`
-            }}
-          </span>
-        </button>
-      </div>
-    </div>
+          :key="'beam-' + getNumericId(torre, idx)"
+          v-show="isLightVisible(torre)"
+          :src="`/assets/luz-torre-${getNumericId(torre, idx)}.png`"
+          alt=""
+          class="map-image light-layer w-full h-full object-contain transform origin-center scale-[1.4] transition-transform duration-300 mix-blend-screen mask-fade-edges"
+          :style="{ opacity: getOpacity(torre) }"
+        />
 
-    <!-- 4. Marcadores Interativos sobre os Postes na Maquete -->
+    <!-- 3. Marcadores Interativos sobre os Postes na Maquete -->
     <div
       v-for="(torre, idx) in torres"
       :key="'marker-' + getNumericId(torre, idx)"
@@ -183,28 +157,59 @@ function isLightVisible(torre: Torre): boolean {
 
     <!-- Aviso de Conexão Offline -->
     <div v-if="!online" class="offline-overlay">
-      <span class="offline-text">⚠️ SISTEMA OFFLINE</span>
+      <span class="offline-text inline-flex items-center gap-1.5"><svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m0 3.75h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" /></svg>SISTEMA OFFLINE</span>
     </div>
+    </div>
+  </div>
   </div>
 </template>
 
 <style scoped>
 .map-container {
   position: relative;
-  isolation: isolate;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  container-type: size;
+  flex: 1 1 0%;
   width: 100%;
   height: 100%;
-  min-height: 400px;
-  background-color: #111315;
-  border-radius: 8px;
+  min-height: 360px;
+  background-color: #13151E;
   overflow: hidden;
-  border: 1px solid #2E3338;
+}
+
+/* Máscara radial preservando pelo menos 68% da área central (maquete 100% visível) e suavizando apenas os 32% finais */
+.mask-fade-edges {
+  -webkit-mask-image: radial-gradient(circle, rgba(0,0,0,1) 60%, rgba(0,0,0,0) 80%);
+  mask-image: radial-gradient(circle, rgba(0,0,0,1) 60%, rgba(0,0,0,0) 80%);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+}
+
+.mask-fade-base {
+  -webkit-mask-image: radial-gradient(circle, rgba(0,0,0,1) 70%, rgba(0,0,0,0) 90%);
+  mask-image: radial-gradient(circle, rgba(0,0,0,1) 70%, rgba(0,0,0,0) 90%);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+}
+
+/* Palco com a proporção real da imagem: o que cabe no contêiner, sem corte lateral */
+.map-stage {
+  position: relative;
+  flex: none;
+  width: min(100cqw, calc(100cqh * var(--ar, 1.78)));
+  aspect-ratio: var(--ar, 1.78);
 }
 
 .map-image {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   display: block;
 }
 
@@ -222,112 +227,6 @@ function isLightVisible(torre: Torre): boolean {
   z-index: 2;
   pointer-events: none;
   transition: opacity 0.18s ease-in-out;
-  mix-blend-mode: screen;
-}
-
-.telemetry-hud {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  z-index: 6;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  background: rgba(13, 16, 20, 0.84);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(8px);
-  border-radius: 8px;
-  padding: 8px 10px;
-}
-
-.hud-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-family: monospace;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: #9ca3af;
-}
-
-.hud-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background-color: #ef4444;
-}
-
-.hud-dot.online {
-  background-color: #22c55e;
-  box-shadow: 0 0 8px #22c55e;
-}
-
-.hud-poles {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.hud-pole-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 7px;
-  border-radius: 5px;
-  border: 1px solid #2e3338;
-  background: rgba(24, 28, 34, 0.9);
-  font-family: monospace;
-  font-size: 10px;
-  color: #d1d5db;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.hud-pole-chip:hover {
-  border-color: #d97706;
-}
-
-.hud-pole-chip.selected {
-  border-color: #f59e0b;
-  background: rgba(217, 119, 6, 0.18);
-}
-
-.chip-status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background-color: #22c55e;
-}
-
-.hud-pole-chip.offline .chip-status-dot,
-.hud-pole-chip.manut .chip-status-dot {
-  background-color: #ef4444;
-}
-
-.chip-code {
-  font-weight: 700;
-  color: #f3f4f6;
-}
-
-.chip-pin {
-  color: #f59e0b;
-  font-weight: 600;
-}
-
-.chip-pwm {
-  color: #9ca3af;
-}
-
-.hud-pole-chip.lit .chip-pwm {
-  color: #fbbf24;
-  font-weight: 700;
-}
-
-.hud-pole-chip.offline .chip-pwm,
-.hud-pole-chip.manut .chip-pwm {
-  color: #ef4444;
-  font-weight: 700;
 }
 
 .pole-marker {
@@ -386,8 +285,8 @@ function isLightVisible(torre: Torre): boolean {
   color: #fbbf24;
   background: rgba(13, 16, 20, 0.88);
   border: 1px solid rgba(245, 158, 11, 0.45);
-  border-radius: 3px;
-  padding: 0 4px;
+  border-radius: 9999px;
+  padding: 0 6px;
   line-height: 1.3;
 }
 
@@ -396,8 +295,8 @@ function isLightVisible(torre: Torre): boolean {
   top: 10px;
   right: 10px;
   background-color: rgba(220, 38, 38, 0.9);
-  padding: 4px 12px;
-  border-radius: 4px;
+  padding: 4px 14px;
+  border-radius: 9999px;
   z-index: 10;
 }
 

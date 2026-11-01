@@ -10,8 +10,12 @@ export interface AuthUser {
   id: number
   username: string
   nome: string
+  email?: string
+  matricula?: string
   cargo: string
   role: UserRole
+  primeiro_acesso?: boolean
+  primeiroAcesso?: boolean
 }
 
 export interface RolePermissions {
@@ -41,22 +45,34 @@ export const USUARIOS_PADRAO: Record<UserRole, AuthUser> = {
     id: 1,
     username: 'adm',
     nome: 'Eng. Carlos Mendes',
+    email: 'carlos.admin@geonex.com.br',
+    matricula: 'ADM-001',
     cargo: 'Administrador Geral',
     role: 'ADMIN',
+    primeiroAcesso: false,
+    primeiro_acesso: false,
   },
   TECNICO: {
     id: 3,
     username: 'tecnico',
     nome: 'Roberto Lima',
+    email: 'roberto.tec@geonex.com.br',
+    matricula: 'TEC-208',
     cargo: 'Técnico de Manutenção',
     role: 'TECNICO',
+    primeiroAcesso: false,
+    primeiro_acesso: false,
   },
   OPERADOR: {
     id: 2,
     username: 'operador',
     nome: 'Marcos Souza (CCO)',
+    email: 'marcos.cco@geonex.com.br',
+    matricula: 'OPR-104',
     cargo: 'Operador de Mina',
     role: 'OPERADOR',
+    primeiroAcesso: false,
+    primeiro_acesso: false,
   },
 }
 
@@ -111,12 +127,17 @@ function lerUsuarioArmazenado(): AuthUser | null {
     const roleNorm = String(parsed.role ?? '').toUpperCase() as UserRole
     if (roleNorm === 'ADMIN' || roleNorm === 'TECNICO' || roleNorm === 'OPERADOR') {
       const base = USUARIOS_PADRAO[roleNorm]
+      const flagPrimeiro = Boolean(parsed.primeiroAcesso || parsed.primeiro_acesso)
       return {
         id: typeof parsed.id === 'number' ? parsed.id : base.id,
         username: String(parsed.username ?? base.username),
         nome: String(parsed.nome ?? base.nome),
+        email: parsed.email ? String(parsed.email) : base.email,
+        matricula: parsed.matricula ? String(parsed.matricula) : base.matricula,
         cargo: String(parsed.cargo ?? base.cargo),
         role: roleNorm,
+        primeiroAcesso: flagPrimeiro,
+        primeiro_acesso: flagPrimeiro,
       }
     }
   } catch {
@@ -137,6 +158,30 @@ export function isAuthenticated(): boolean {
     currentUser.value = lerUsuarioArmazenado() ?? USUARIOS_PADRAO.ADMIN
   }
   return true
+}
+
+/** Verifica se o usuário autenticado precisa obrigatoriamente trocar a senha de primeiro acesso */
+export function mustChangePassword(): boolean {
+  const u = currentUser.value ?? lerUsuarioArmazenado()
+  return Boolean(u?.primeiroAcesso || u?.primeiro_acesso)
+}
+
+/** Limpa a flag de primeiro acesso após o usuário definir sua nova senha */
+export function clearFirstAccessFlag(): void {
+  const u = currentUser.value ?? lerUsuarioArmazenado()
+  if (!u) return
+  const atualizado: AuthUser = {
+    ...u,
+    primeiroAcesso: false,
+    primeiro_acesso: false,
+  }
+  currentUser.value = atualizado
+  if (localStorage.getItem(AUTH_STORAGE_KEY) === '1') {
+    localStorage.setItem(AUTH_USER_KEY, JSON.stringify(atualizado))
+  }
+  if (sessionStorage.getItem(AUTH_STORAGE_KEY) === '1') {
+    sessionStorage.setItem(AUTH_USER_KEY, JSON.stringify(atualizado))
+  }
 }
 
 export function getCurrentUser(): AuthUser {
@@ -178,13 +223,6 @@ export function logoutSession(): void {
   currentUser.value = null
 }
 
-/**
- * Valida estritamente as credenciais digitadas manualmente pelo usuário
- * e identifica o Nível de Acesso (role) correspondente:
- *  - Administrador: 'adm' / 'admin' / 'adm-001'
- *  - Técnico:       'tecnico' / 'tec' / 'tec-208'
- *  - Operador:      'operador' / 'opr' / 'opr-104'
- */
 export function autenticarLocalmente(
   usernameInput: string,
   passwordInput: string,
@@ -196,7 +234,6 @@ export function autenticarLocalmente(
 
   const senhasValidasGerais = ['123456', 'geonex123']
 
-  // 1. Verifica Administrador (adm)
   if (
     u === 'adm' ||
     u === 'admin' ||
@@ -210,7 +247,6 @@ export function autenticarLocalmente(
     return null
   }
 
-  // 2. Verifica Técnico
   if (
     u === 'tecnico' ||
     u === 'técnico' ||
@@ -225,7 +261,6 @@ export function autenticarLocalmente(
     return null
   }
 
-  // 3. Verifica Operador
   if (
     u === 'operador' ||
     u === 'opr' ||
