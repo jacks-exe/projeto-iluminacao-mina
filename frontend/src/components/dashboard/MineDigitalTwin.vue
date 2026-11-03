@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { defineAsyncComponent, ref } from 'vue'
+// Carregamento sob demanda: mantém o three.js fora do bundle principal
+const GeonexMaquete3D = defineAsyncComponent(() => import('@/components/dashboard/GeonexMaquete3D.vue'))
 import { PINOS_POSTES } from '@/config/scada'
 import type { Torre } from '@/types/scada'
 
@@ -15,6 +17,9 @@ const emit = defineEmits<{
   (e: 'maintenance', torre: Torre): void
   (e: 'toggle-power', torre: Torre): void
 }>()
+
+// Modo de visualização: 3D (Three.js, render sob demanda) ou 2D legado (imagens sobrepostas)
+const modo = ref<'3d' | '2d'>('3d')
 
 // Proporção real da maquete: o palco se ajusta ao espaço disponível sem cortar as torres das extremidades
 const mapRatio = ref(16 / 9)
@@ -110,8 +115,12 @@ function isLightVisible(torre: Torre): boolean {
 <template>
   <!-- Bento card do Gêmeo Digital: fundo sólido #13151E, centralizado e sem cortes secos -->
   <div class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-3xl border border-white/8 bg-[#13151E] p-2">
+    <!-- Alternância 3D/2D -->
+    <div class="absolute left-4 top-4 z-20 flex gap-1 rounded-full bg-black/50 p-1 text-xs font-semibold text-white"><button v-for="m in ['3d','2d'] as const" :key="m" type="button" class="rounded-full px-3 py-1" :class="modo === m ? 'bg-[#FF6B00]' : 'opacity-70'" @click="modo = m">{{ m.toUpperCase() }}</button></div>
+    <div v-if="!online && modo === '3d'" class="offline-overlay"><span class="offline-text">SISTEMA OFFLINE</span></div>
     <div class="map-container">
-      <div class="map-stage" :style="{ '--ar': mapRatio }">
+      <GeonexMaquete3D v-if="modo === '3d'" class="absolute inset-0" :torres="torres" :selected-id="selectedId" @select-tower="(id) => emit('select-node', id)" />
+      <div v-else class="map-stage" :style="{ '--ar': mapRatio }">
         <!-- 1. Imagem Base (Mina) integrada ao fundo #13151E com Radial Fade Mask Próprio (SEM mix-blend-screen) -->
         <img
           src="/assets/mina-base.png"
@@ -155,8 +164,8 @@ function isLightVisible(torre: Torre): boolean {
       <span class="pole-pin-badge">D{{ getPinoDigital(torre, idx) }}</span>
     </div>
 
-    <!-- Aviso de Conexão Offline -->
-    <div v-if="!online" class="offline-overlay">
+    <!-- Aviso de Conexão Offline (2D) -->
+    <div v-if="!online && modo === '2d'" class="offline-overlay">
       <span class="offline-text inline-flex items-center gap-1.5"><svg class="size-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m0 3.75h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" /></svg>SISTEMA OFFLINE</span>
     </div>
     </div>
