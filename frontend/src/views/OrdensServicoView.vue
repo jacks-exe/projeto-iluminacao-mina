@@ -277,289 +277,333 @@ function formatarData(iso?: string | null) {
 </script>
 
 <template>
-  <section class="flex min-h-0 flex-1 flex-col p-4">
-    <div class="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-[20px] border border-white/5 bg-panel shadow-[0_8px_30px_rgb(0,0,0,0.25)]">
-          <!-- Cabeçalho SCADA + Seletor RBAC -->
-          <header class="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-panel-2/70 px-5 py-3.5">
-            <div>
-              <div class="flex items-center gap-2">
-                <span class="size-2 rounded-full bg-ore" />
-                <h2 class="text-sm font-bold uppercase tracking-wider text-ink">
-                  Gestão de Ordens de Serviço (O.S.) · GEONEX SCADA
-                </h2>
-              </div>
-              <p class="mt-0.5 text-[11px] text-mute">
-                Controle de manutenção e bloqueio operacional integrado ao MySQL
-              </p>
-            </div>
+  <section class="flex min-h-0 flex-1 flex-col font-sans p-4">
+    <div class="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-[24px] border border-white/8 bg-panel shadow-[0_12px_40px_rgb(0,0,0,0.35)]">
+      <!-- Cabeçalho SCADA (sem o seletor redundante de nível de acesso) -->
+      <header class="flex flex-wrap items-center justify-between gap-4 border-b border-line bg-panel-2/80 px-6 py-4">
+        <div>
+          <div class="flex items-center gap-2.5">
+            <span class="size-2.5 rounded-full bg-[#FF6B00] shadow-[0_0_10px_#FF6B00]" />
+            <h2 class="font-display text-base font-bold uppercase tracking-wider text-ink">
+              Gestão de Ordens de Serviço (O.S.) · <span class="text-[#FF7A1A]">GEONEX SCADA</span>
+            </h2>
+          </div>
+          <p class="mt-1 font-sans text-xs text-mute">
+            Controle de manutenção preventiva/corretiva e bloqueio operacional integrado ao MySQL
+          </p>
+        </div>
 
-            <!-- Indicador / Seletor RBAC -->
-            <div class="flex items-center gap-2">
-              <span class="scada-label !text-[9px]">Nível de Acesso Ativo:</span>
-              <div class="flex rounded-xl border border-line bg-abyss p-0.5 text-[10px] font-semibold">
-                <button
-                  v-for="r in (['ADMIN', 'OPERADOR', 'TECNICO'] as RoleUsuario[])"
-                  :key="r"
-                  type="button"
-                  :disabled="(currentUser?.role ?? 'ADMIN') !== 'ADMIN' && roleAtiva !== r"
-                  class="rounded px-2 py-1 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-                  :class="roleAtiva === r ? 'bg-ore text-abyss' : 'text-mute hover:text-ink'"
-                  :title="(currentUser?.role ?? 'ADMIN') === 'ADMIN' ? `Simular visão do perfil ${r}` : `Logado como ${roleAtiva}`"
-                  @click="
-                    if ((currentUser?.role ?? 'ADMIN') === 'ADMIN') {
-                      roleAtiva = r;
-                      if (r === 'TECNICO' && abaAtiva === 'NOVA') abaAtiva = 'LISTA';
-                      carregarOrdens();
-                    }
-                  "
+        <div class="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            class="btn-secondary btn-sm"
+            :disabled="carregando"
+            @click="carregarOrdens()"
+          >
+            <span>{{ carregando ? 'Atualizando...' : 'Atualizar Lista' }}</span>
+            <svg class="btn-arrow" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6" />
+            </svg>
+          </button>
+
+          <button
+            v-if="podeAbrirOS && abaAtiva !== 'NOVA'"
+            type="button"
+            class="btn-primary btn-sm"
+            @click="abaAtiva = 'NOVA'"
+          >
+            <span>Nova Ordem de Serviço</span>
+            <svg class="btn-arrow" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Barra de Navegação e Filtros -->
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-panel px-6 py-3">
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            class="rounded-[18px] px-4 py-2 font-display text-xs font-bold tracking-wide transition-all duration-200"
+            :class="
+              abaAtiva === 'LISTA'
+                ? 'border border-[#FF6B00]/50 bg-[#FF6B00]/15 text-[#FF7A1A] shadow-sm'
+                : 'border border-transparent bg-panel-2/60 text-mute hover:border-white/10 hover:text-ink'
+            "
+            @click="abaAtiva = 'LISTA'; carregarOrdens();"
+          >
+            Chamados Registrados ({{ ordens.length }})
+          </button>
+
+          <button
+            v-if="podeAbrirOS"
+            type="button"
+            class="rounded-[18px] px-4 py-2 font-display text-xs font-bold tracking-wide transition-all duration-200"
+            :class="
+              abaAtiva === 'NOVA'
+                ? 'border border-[#FF6B00] bg-[#FF6B00] text-white shadow-[0_4px_16px_rgba(255,107,0,0.35)]'
+                : 'border border-white/10 bg-panel-2/60 text-mute hover:border-[#FF6B00]/40 hover:text-ink'
+            "
+            @click="abaAtiva = 'NOVA'"
+          >
+            + Abrir Nova O.S.
+          </button>
+          <span v-else class="font-sans text-xs text-mute italic">
+            (Perfil Técnico: abertura de O.S. restrita)
+          </span>
+        </div>
+
+        <!-- Filtro de Status -->
+        <div v-if="abaAtiva === 'LISTA'" class="flex flex-wrap items-center gap-1.5">
+          <span class="mr-1 font-display text-[11px] font-semibold uppercase tracking-wider text-mute">Status:</span>
+          <button
+            v-for="st in (['TODAS', 'ABERTA', 'EM_ANDAMENTO', 'CONCLUIDA'] as const)"
+            :key="st"
+            type="button"
+            class="rounded-full border px-3 py-1 font-display text-[11px] font-semibold tracking-wider transition-all duration-200"
+            :class="
+              filtroStatus === st
+                ? 'border-[#FF6B00]/60 bg-[#FF6B00]/15 text-[#FF7A1A]'
+                : 'border-white/8 bg-panel-2/70 text-mute hover:border-white/20 hover:text-ink'
+            "
+            @click="filtroStatus = st"
+          >
+            {{ st.replace('_', ' ') }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Feedback -->
+      <div
+        v-if="feedback"
+        class="border-b border-line px-6 py-2.5 font-sans text-xs font-semibold"
+        :class="feedback.tipo === 'ok' ? 'bg-ok/15 text-ok' : 'bg-fault/15 text-fault'"
+      >
+        {{ feedback.texto }}
+      </div>
+
+      <!-- LISTA DE CHAMADOS EM CARDS INDEPENDENTES -->
+      <div
+        v-if="abaAtiva === 'LISTA'"
+        v-auto-animate
+        class="min-h-0 flex-1 overflow-y-auto bg-abyss/55 p-6"
+      >
+        <div class="flex flex-col gap-4">
+          <article
+            v-for="os in ordensFiltradas"
+            :key="os.id"
+            class="flex flex-col gap-4 rounded-2xl border border-white/8 bg-panel p-5 shadow-[0_8px_26px_rgba(0,0,0,0.35)] transition-all duration-200 hover:border-[#FF6B00]/40 hover:shadow-[0_12px_34px_rgba(0,0,0,0.5)]"
+          >
+            <!-- Topo do Card: Identificadores e Ação -->
+            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.06] pb-3.5">
+              <div class="flex flex-wrap items-center gap-2.5">
+                <span class="rounded-xl border border-white/10 bg-abyss px-3 py-1 font-mono text-xs font-bold tracking-wider text-ink">
+                  OS #{{ os.id }}
+                </span>
+                <span class="rounded-xl border border-[#FF6B00]/35 bg-[#FF6B00]/12 px-3 py-1 font-mono text-xs font-bold tracking-wider text-[#FF7A1A]">
+                  {{ os.torre_codigo }}
+                </span>
+                <span
+                  class="rounded-full border px-3 py-1 font-display text-[10px] font-bold uppercase tracking-wider"
+                  :class="badgePrioridade(os.prioridade)"
                 >
-                  {{ r }}
+                  Prioridade {{ os.prioridade }}
+                </span>
+                <span
+                  class="rounded-full border px-3 py-1 font-display text-[10px] font-bold uppercase tracking-wider"
+                  :class="badgeStatus(os.status)"
+                >
+                  {{ os.status.replace('_', ' ') }}
+                </span>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-3 text-xs text-mute">
+                <span class="rounded-lg bg-abyss/60 px-2.5 py-1">
+                  Aberta em: <strong class="font-mono text-ink">{{ formatarData(os.data_abertura) }}</strong>
+                </span>
+                <button
+                  v-if="podeAtenderOS && os.status !== 'CONCLUIDA'"
+                  type="button"
+                  :class="os.status === 'ABERTA' ? 'btn-tinted btn-sm' : 'btn-primary-ok btn-sm'"
+                  @click="selecionarParaLaudo(os)"
+                >
+                  <span>{{ os.status === 'ABERTA' ? 'Assumir / Iniciar' : 'Concluir / Laudo' }}</span>
+                  <svg class="btn-arrow" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6" />
+                  </svg>
                 </button>
               </div>
             </div>
-          </header>
 
-          <!-- Barra de Navegação e Filtros -->
-          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-panel px-5 py-2.5">
-            <div class="flex items-center gap-2">
-              <button
-                type="button"
-                class="rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors"
-                :class="abaAtiva === 'LISTA' ? 'bg-panel-2 text-ink border border-line' : 'text-mute hover:text-ink'"
-                @click="abaAtiva = 'LISTA'; carregarOrdens();"
-              >
-                Chamados Registrados ({{ ordens.length }})
-              </button>
+            <!-- Corpo do Card: Descrição do Problema -->
+            <div class="rounded-xl border border-white/[0.05] bg-panel-2/75 px-4 py-3.5">
+              <span class="mb-1 block font-display text-[10px] font-bold uppercase tracking-wider text-mute">
+                Descrição da Ocorrência
+              </span>
+              <p class="font-sans text-sm leading-relaxed text-ink">{{ os.descricao_problema }}</p>
+            </div>
 
-              <button
-                v-if="podeAbrirOS"
-                type="button"
-                class="rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors"
-                :class="
-                  abaAtiva === 'NOVA'
-                    ? 'border-ore bg-ore text-abyss'
-                    : 'border-ore/50 bg-ore/10 text-ore hover:bg-ore/20'
-                "
-                @click="abaAtiva = 'NOVA'"
-              >
-                + Nova O.S.
-              </button>
-              <span v-else class="text-[11px] text-mute italic">
-                (Perfil Técnico: abertura de O.S. restrita)
+            <!-- Laudo Técnico (se preenchido) -->
+            <div
+              v-if="os.laudo_solucao"
+              class="rounded-xl border border-ok/35 bg-ok/[0.08] px-4 py-3 text-xs"
+            >
+              <span class="mb-1 block font-display text-[10px] font-bold uppercase tracking-wider text-ok">
+                Laudo Técnico de Solução
+              </span>
+              <p class="font-sans text-sm leading-relaxed text-ink">{{ os.laudo_solucao }}</p>
+            </div>
+
+            <!-- Rodapé do Card: Metadados -->
+            <div class="flex flex-wrap items-center justify-between gap-4 pt-0.5 text-xs text-mute">
+              <div class="flex flex-wrap items-center gap-5">
+                <span>Solicitante: <strong class="font-semibold text-ink">{{ os.criador_nome }}</strong></span>
+                <span>
+                  Técnico Responsável:
+                  <strong class="font-semibold text-ink">{{ os.tecnico_nome ?? 'Aguardando atribuição' }}</strong>
+                </span>
+              </div>
+              <span v-if="os.data_conclusao" class="rounded-lg border border-ok/25 bg-ok/10 px-2.5 py-0.5 text-[11px] text-ok">
+                Concluída em: <strong class="font-mono">{{ formatarData(os.data_conclusao) }}</strong>
               </span>
             </div>
 
-            <div class="flex items-center gap-2">
-              <!-- Botão manual de refresh -->
-              <button
-                type="button"
-                class="rounded-lg border border-line bg-panel-2 px-2.5 py-1 text-[11px] text-mute hover:text-ink"
-                :disabled="carregando"
-                @click="carregarOrdens()"
-              >
-                {{ carregando ? 'Atualizando...' : 'Atualizar Lista' }}
-              </button>
-
-              <!-- Filtro de Status -->
-              <div v-if="abaAtiva === 'LISTA'" class="flex items-center gap-1 text-[11px]">
-                <button
-                  v-for="st in (['TODAS', 'ABERTA', 'EM_ANDAMENTO', 'CONCLUIDA'] as const)"
-                  :key="st"
-                  type="button"
-                  class="rounded-lg border px-2 py-0.5 text-[10px] transition-colors"
-                  :class="
-                    filtroStatus === st
-                      ? 'border-ore/60 bg-ore/15 text-ore'
-                      : 'border-line bg-panel-2/50 text-mute hover:text-ink'
-                  "
-                  @click="filtroStatus = st"
-                >
-                  {{ st }}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Feedback -->
-          <div
-            v-if="feedback"
-            class="border-b border-line px-5 py-2 text-xs font-medium"
-            :class="feedback.tipo === 'ok' ? 'bg-ok/15 text-ok' : 'bg-fault/15 text-fault'"
-          >
-            {{ feedback.texto }}
-          </div>
-
-          <!-- LISTA DE CHAMADOS -->
-          <div v-if="abaAtiva === 'LISTA'" v-auto-animate class="min-h-0 flex-1 overflow-y-auto divide-y divide-line">
-            <div
-              v-for="os in ordensFiltradas"
-              :key="os.id"
-              class="flex flex-col gap-2.5 px-5 py-3.5 transition-colors hover:bg-panel-2/40"
+            <!-- Formulário inline para Laudo -->
+            <form
+              v-if="osEmEdicao?.id === os.id"
+              class="mt-1 flex flex-col gap-3 rounded-2xl border border-[#FF6B00]/45 bg-abyss/90 p-4"
+              @submit.prevent="salvarStatusELaudo"
             >
               <div class="flex flex-wrap items-center justify-between gap-2">
-                <div class="flex items-center gap-2.5">
-                  <span class="font-mono text-xs font-bold text-ink">OS #{{ os.id }}</span>
-                  <span class="rounded bg-clay/15 px-2 py-0.5 text-xs font-semibold text-clay">
-                    {{ os.torre_codigo }}
-                  </span>
-                  <span
-                    class="rounded-lg border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
-                    :class="badgePrioridade(os.prioridade)"
-                  >
-                    {{ os.prioridade }}
-                  </span>
-                  <span
-                    class="rounded-lg border px-2 py-0.5 text-[10px] font-semibold"
-                    :class="badgeStatus(os.status)"
-                  >
-                    {{ os.status }}
-                  </span>
-                </div>
-
-                <div class="flex items-center gap-3 text-[11px] text-mute">
-                  <span>Aberta: <strong class="font-mono text-ink">{{ formatarData(os.data_abertura) }}</strong></span>
-                  <button
-                    v-if="podeAtenderOS && os.status !== 'CONCLUIDA'"
-                    type="button"
-                    class="rounded-lg border border-ore/50 bg-ore/10 px-2.5 py-1 text-[11px] font-semibold text-ore hover:bg-ore/20"
-                    @click="selecionarParaLaudo(os)"
-                  >
-                    {{ os.status === 'ABERTA' ? 'Assumir / Iniciar' : 'Concluir / Laudo' }}
-                  </button>
-                </div>
-              </div>
-
-              <p class="text-xs leading-relaxed text-ink">{{ os.descricao_problema }}</p>
-
-              <div
-                v-if="os.laudo_solucao"
-                class="rounded-xl border border-line bg-abyss/60 px-3 py-2 text-[11px] text-mute"
-              >
-                <span class="font-semibold uppercase tracking-wider text-ok">Laudo Técnico: </span>
-                <span class="text-ink">{{ os.laudo_solucao }}</span>
-              </div>
-
-              <div class="flex flex-wrap items-center gap-4 text-[10px] text-mute">
-                <span>Solicitante: <strong class="text-ink">{{ os.criador_nome }}</strong></span>
-                <span>
-                  Técnico:
-                  <strong class="text-ink">{{ os.tecnico_nome ?? 'Aguardando atribuição' }}</strong>
+                <span class="font-display text-xs font-bold uppercase tracking-wider text-[#FF7A1A]">
+                  Parecer Técnico da O.S. #{{ os.id }} ({{ os.torre_codigo }})
                 </span>
-                <span v-if="os.data_conclusao">
-                  Concluída em: <strong class="font-mono text-ok">{{ formatarData(os.data_conclusao) }}</strong>
-                </span>
+                <select v-model="novoStatusEdicao" class="scada-input !w-56 font-display font-semibold">
+                  <option value="EM_ANDAMENTO">EM ANDAMENTO</option>
+                  <option value="CONCLUIDA">CONCLUÍDA (Liberar Torre)</option>
+                  <option value="CANCELADA">CANCELADA</option>
+                </select>
               </div>
+              <textarea
+                v-model="laudoEdicao"
+                rows="3"
+                placeholder="Descreva o diagnóstico técnico e a solução aplicada na torre..."
+                class="scada-input resize-none text-sm"
+                :required="novoStatusEdicao === 'CONCLUIDA'"
+              />
+              <div class="flex justify-end gap-3 pt-1">
+                <button
+                  type="button"
+                  class="btn-secondary btn-sm"
+                  @click="osEmEdicao = null"
+                >
+                  <span>Cancelar</span>
+                </button>
+                <button
+                  type="submit"
+                  :disabled="enviando"
+                  class="btn-primary btn-sm"
+                >
+                  <span>{{ enviando ? 'Salvando...' : 'Salvar Status e Laudo' }}</span>
+                  <svg class="btn-arrow" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6" />
+                  </svg>
+                </button>
+              </div>
+            </form>
+          </article>
+        </div>
 
-              <!-- Formulário inline para Laudo -->
-              <form
-                v-if="osEmEdicao?.id === os.id"
-                class="mt-2 flex flex-col gap-2.5 rounded-2xl border border-ore/40 bg-panel-2 p-3"
-                @submit.prevent="salvarStatusELaudo"
-              >
-                <div class="flex items-center justify-between">
-                  <span class="scada-label text-ore">Parecer Técnico da O.S. #{{ os.id }}</span>
-                  <select v-model="novoStatusEdicao" class="scada-input !w-48">
-                    <option value="EM_ANDAMENTO">EM ANDAMENTO</option>
-                    <option value="CONCLUIDA">CONCLUÍDA (Liberar Torre)</option>
-                    <option value="CANCELADA">CANCELADA</option>
-                  </select>
-                </div>
-                <textarea
-                  v-model="laudoEdicao"
-                  rows="2"
-                  placeholder="Descreva o diagnóstico e a solução aplicada..."
-                  class="scada-input resize-none"
-                  :required="novoStatusEdicao === 'CONCLUIDA'"
-                />
-                <div class="flex justify-end gap-2">
-                  <button
-                    type="button"
-                    class="rounded-lg border border-line px-3 py-1 text-xs text-mute hover:text-ink"
-                    @click="osEmEdicao = null"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    :disabled="enviando"
-                    class="rounded bg-ore px-3.5 py-1 text-xs font-semibold text-abyss hover:opacity-90 disabled:opacity-40"
-                  >
-                    {{ enviando ? 'Salvando...' : 'Salvar Status e Laudo' }}
-                  </button>
-                </div>
-              </form>
-            </div>
+        <div
+          v-if="!ordensFiltradas.length && !carregando"
+          class="rounded-2xl border border-dashed border-white/10 bg-panel p-12 text-center font-display text-sm text-mute"
+        >
+          Nenhuma Ordem de Serviço encontrada para o filtro selecionado.
+        </div>
+        <div
+          v-if="carregando"
+          class="rounded-2xl border border-white/8 bg-panel p-12 text-center font-display text-sm text-mute animate-pulse"
+        >
+          Carregando chamados do banco MySQL...
+        </div>
+      </div>
 
-            <div v-if="!ordensFiltradas.length && !carregando" class="py-12 text-center text-xs text-mute">
-              Nenhuma Ordem de Serviço encontrada.
-            </div>
-            <div v-if="carregando" class="py-12 text-center text-xs text-mute animate-pulse">
-              Carregando chamados do banco MySQL...
-            </div>
+      <!-- FORMULÁRIO DE ABERTURA DE NOVA O.S. -->
+      <form
+        v-else
+        class="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto bg-abyss/40 p-6"
+        @submit.prevent="criarOrdemServico"
+      >
+        <div class="rounded-2xl border border-white/8 bg-panel p-6 shadow-lg space-y-5">
+          <div class="border-b border-white/[0.06] pb-3">
+            <h3 class="font-display text-base font-bold text-ink">Abertura de Chamado Técnico</h3>
+            <p class="text-xs text-mute">Preencha os dados da ocorrência para acionar a equipe de manutenção.</p>
           </div>
 
-          <!-- FORMULÁRIO DE ABERTURA DE NOVA O.S. -->
-          <form
-            v-else
-            class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-5"
-            @submit.prevent="criarOrdemServico"
-          >
-            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <label class="flex flex-col gap-1.5">
-                <span class="scada-label">Torre Afetada</span>
-                <select v-model="novaTorreId" class="scada-input" required>
-                  <option :value="null" disabled>Selecione a torre...</option>
-                  <option v-for="t in torres" :key="t.id" :value="t.id">
-                    {{ t.codigo }} — {{ typeof t.setor === 'string' ? t.setor : (t.setor?.nome ?? 'Setor Principal') }}
-                  </option>
-                </select>
-              </label>
-
-              <label class="flex flex-col gap-1.5">
-                <span class="scada-label">Prioridade Operacional</span>
-                <select v-model="novaPrioridade" class="scade-input scada-input" required>
-                  <option value="BAIXA">BAIXA — Manutenção programada</option>
-                  <option value="MEDIA">MÉDIA — Degradação de luminosidade</option>
-                  <option value="ALTA">ALTA — Falha de driver PWM</option>
-                  <option value="CRITICA">CRÍTICA — Torre apagada em rampa</option>
-                </select>
-              </label>
-            </div>
-
-            <label class="flex flex-col gap-1.5">
-              <span class="scada-label">Descrição Detalhada da Anomalia</span>
-              <textarea
-                v-model="novaDescricao"
-                rows="4"
-                maxlength="500"
-                required
-                placeholder="Descreva o sintoma observado no SCADA..."
-                class="scada-input resize-none"
-              />
+          <div class="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <label class="flex flex-col gap-2">
+              <span class="font-display text-xs font-bold uppercase tracking-wider text-mute">Torre Afetada</span>
+              <select v-model="novaTorreId" class="scada-input !py-2.5 !text-sm font-mono" required>
+                <option :value="null" disabled>Selecione a torre...</option>
+                <option v-for="t in torres" :key="t.id" :value="t.id">
+                  {{ t.codigo }} — {{ typeof t.setor === 'string' ? t.setor : (t.setor?.nome ?? 'Setor Principal') }}
+                </option>
+              </select>
             </label>
 
-            <label class="flex items-center gap-2 text-xs text-ink">
-              <input v-model="bloquearTorre" type="checkbox" class="accent-ore" />
-              <span>Bloquear acionamento remoto da torre (<code class="text-fault">EM_MANUTENCAO</code>) até a conclusão.</span>
+            <label class="flex flex-col gap-2">
+              <span class="font-display text-xs font-bold uppercase tracking-wider text-mute">Prioridade Operacional</span>
+              <select v-model="novaPrioridade" class="scada-input !py-2.5 !text-sm font-sans" required>
+                <option value="BAIXA">BAIXA — Manutenção programada</option>
+                <option value="MEDIA">MÉDIA — Degradação de luminosidade</option>
+                <option value="ALTA">ALTA — Falha de driver PWM</option>
+                <option value="CRITICA">CRÍTICA — Torre apagada em rampa</option>
+              </select>
             </label>
+          </div>
 
-            <div class="mt-2 flex items-center justify-end gap-2 border-t border-line pt-4">
-              <button
-                type="button"
-                class="rounded-xl border border-line px-4 py-2 text-xs font-semibold text-mute hover:text-ink"
-                @click="abaAtiva = 'LISTA'"
-              >
-                Voltar à Lista
-              </button>
-              <button
-                type="submit"
-                :disabled="enviando || !novaTorreId || !novaDescricao.trim()"
-                class="rounded-xl bg-ore px-5 py-2 text-xs font-bold text-abyss transition-opacity hover:opacity-90 disabled:opacity-40"
-              >
-                {{ enviando ? 'Gravando no Banco...' : 'Confirmar Abertura de O.S.' }}
-              </button>
-            </div>
-          </form>
+          <label class="flex flex-col gap-2">
+            <span class="font-display text-xs font-bold uppercase tracking-wider text-mute">Descrição Detalhada da Anomalia</span>
+            <textarea
+              v-model="novaDescricao"
+              rows="4"
+              maxlength="500"
+              required
+              placeholder="Descreva o sintoma observado no SCADA..."
+              class="scada-input resize-none !p-3.5 !text-sm"
+            />
+          </label>
+
+          <label class="flex items-center gap-2.5 rounded-xl border border-white/6 bg-abyss/60 px-4 py-3 text-xs text-ink cursor-pointer">
+            <input v-model="bloquearTorre" type="checkbox" class="size-4 accent-[#FF6B00]" />
+            <span>Bloquear acionamento remoto da torre (<code class="font-mono font-bold text-fault">EM_MANUTENCAO</code>) até a conclusão do chamado.</span>
+          </label>
+
+          <div class="flex flex-wrap items-center justify-end gap-3 border-t border-line pt-4">
+            <button
+              type="button"
+              class="btn-secondary"
+              @click="abaAtiva = 'LISTA'"
+            >
+              <span>Voltar à Lista</span>
+              <svg class="btn-arrow" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6" />
+              </svg>
+            </button>
+            <button
+              type="submit"
+              :disabled="enviando || !novaTorreId || !novaDescricao.trim()"
+              class="btn-primary"
+            >
+              <span>{{ enviando ? 'Gravando no Banco...' : 'Confirmar Abertura de O.S.' }}</span>
+              <svg class="btn-arrow" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </form>
     </div>
   </section>
 </template>

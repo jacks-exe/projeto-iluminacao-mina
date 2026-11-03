@@ -367,7 +367,9 @@ async function handleConfirmarResetSenha() {
           <img
             src="/assets/geonex-full.svg"
             alt="GEONEX - Mining Lighting Control"
-            class="h-12 mx-auto drop-shadow-[0_0_15px_rgba(255,107,0,0.4)]"
+            class="h-20 mx-auto drop-shadow-[0_0_20px_rgba(255,107,0,0.45)] cursor-pointer select-none transition-transform hover:scale-105 active:scale-95"
+            @click="$router.push('/')"
+            title="Voltar para a página inicial"
           />
         </div>
 
@@ -421,9 +423,9 @@ async function handleConfirmarResetSenha() {
             <button
               type="button"
               @click="abrirEsqueciSenha"
-              class="hover:text-white transition-colors"
+              class="font-semibold text-[#FF7A1A] hover:text-[#FF9447] transition-colors"
             >
-              Esqueci a senha
+              Esqueci a senha →
             </button>
           </div>
 
@@ -431,9 +433,12 @@ async function handleConfirmarResetSenha() {
           <button
             type="submit"
             :disabled="loading"
-            class="w-full h-12 mt-3 rounded-xl bg-gradient-to-b from-[#FF8533] to-[#E65100] hover:from-[#FF6B00] hover:to-[#CC4800] text-white font-bold tracking-wide shadow-[0_0_20px_rgba(255,107,0,0.35)] transition-all active:scale-[0.98] disabled:opacity-50"
+            class="btn-primary mt-3 w-full"
           >
-            {{ loading ? 'Autenticando...' : 'ACESSAR SISTEMA' }}
+            <span>{{ loading ? 'Autenticando...' : 'Acessar Sistema' }}</span>
+            <svg class="btn-arrow" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6" />
+            </svg>
           </button>
 
           <p v-if="errorMessage" class="text-center text-xs text-red-400 pt-2 font-medium">{{ errorMessage }}</p>
@@ -480,17 +485,23 @@ async function handleConfirmarResetSenha() {
           <button
             type="submit"
             :disabled="loading"
-            class="w-full h-12 rounded-xl bg-gradient-to-b from-[#FF8533] to-[#E65100] hover:from-[#FF6B00] hover:to-[#CC4800] text-white font-bold tracking-wide shadow-[0_0_20px_rgba(255,107,0,0.35)] transition-all active:scale-[0.98] disabled:opacity-50"
+            class="btn-primary w-full"
           >
-            {{ loading ? 'Salvando...' : 'DEFINIR NOVA SENHA' }}
+            <span>{{ loading ? 'Salvando...' : 'Definir Nova Senha' }}</span>
+            <svg class="btn-arrow" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6" />
+            </svg>
           </button>
 
           <button
             type="button"
-            class="w-full text-center text-xs text-zinc-400 hover:text-white transition-colors"
+            class="btn-secondary w-full !py-2.5 text-xs"
             @click="cancelarPrimeiroAcesso"
           >
-            Sair e voltar para o login
+            <span>Sair e voltar para o login</span>
+            <svg class="btn-arrow" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6" />
+            </svg>
           </button>
 
           <p v-if="errorMessage" class="text-center text-xs text-red-400 pt-1 font-medium">{{ errorMessage }}</p>
@@ -501,15 +512,15 @@ async function handleConfirmarResetSenha() {
              ================================================================ -->
         <div v-else class="space-y-4">
           <div class="flex items-center justify-between border-b border-white/10 pb-2">
-            <span class="text-xs font-bold uppercase tracking-wider text-[#FF8533]">
+            <span class="font-display text-xs font-bold uppercase tracking-wider text-[#FF8533]">
               Recuperação de Senha
             </span>
             <button
               type="button"
-              class="text-xs text-zinc-400 hover:text-white"
+              class="text-xs font-semibold text-[#FF7A1A] hover:text-white transition-colors"
               @click="voltarAoLogin"
             >
-              Voltar ao Login
+              Voltar ao Login →
             </button>
           </div>
 
@@ -535,9 +546,12 @@ async function handleConfirmarResetSenha() {
             <button
               type="submit"
               :disabled="loading"
-              class="w-full h-11 rounded-xl bg-gradient-to-b from-[#FF8533] to-[#E65100] hover:from-[#FF6B00] hover:to-[#CC4800] text-white text-xs font-bold uppercase tracking-wider shadow-[0_0_20px_rgba(255,107,0,0.35)] transition-all disabled:opacity-50"
+              class="btn-primary w-full"
             >
-              {{ loading ? 'Gerando...' : 'Gerar Token de Recuperação' }}
+              <span>{{ loading ? 'Gerando...' : 'Gerar Token de Recuperação' }}</span>
+              <svg class="btn-arrow" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6" />
+              </svg>
             </button>
           </form>
 
@@ -596,9 +610,12 @@ async function handleConfirmarResetSenha() {
             <button
               type="submit"
               :disabled="loading"
-              class="w-full h-11 rounded-xl bg-gradient-to-b from-[#FF8533] to-[#E65100] hover:from-[#FF6B00] hover:to-[#CC4800] text-white text-xs font-bold uppercase tracking-wider shadow-[0_0_20px_rgba(255,107,0,0.35)] transition-all disabled:opacity-50"
+              class="btn-primary w-full"
             >
-              {{ loading ? 'Salvando...' : 'Confirmar Nova Senha' }}
+              <span>{{ loading ? 'Salvando...' : 'Confirmar Nova Senha' }}</span>
+              <svg class="btn-arrow" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6" />
+              </svg>
             </button>
           </form>
 
