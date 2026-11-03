@@ -89,12 +89,12 @@ function aoSoltarSlider() {
             boxShadow: ligada ? `0 0 8px ${atual.color}` : 'none',
           }"
         />
-        <span class="font-mono text-xs font-bold" :class="highlighted ? 'text-ore' : 'text-ink'">
+        <span class="font-mono text-xs font-bold tracking-wider" :class="highlighted ? 'text-ore' : 'text-ink'">
           {{ torre.codigo }}
         </span>
         <span
-          class="rounded-lg border border-ore/40 bg-ore/10 px-1 py-px text-[9px] font-bold text-ore"
-          :title="`Porta Digital ${pinoDigital} do Arduino Uno`"
+          class="rounded-lg border border-ore/40 bg-ore/10 px-1.5 py-px font-mono text-[9px] font-bold tracking-wider text-ore"
+          :title="`Porta Digital ${pinoDigital} do Arduino Mega`"
         >
           D{{ pinoDigital }}
         </span>

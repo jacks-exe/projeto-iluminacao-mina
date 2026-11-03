@@ -26,7 +26,7 @@ function pino(t: Torre, idx: number) {
       </div>
       <div class="min-w-0 flex-1">
         <div class="flex items-center justify-between gap-2">
-          <span class="truncate text-sm font-semibold">{{ t.codigo }}</span>
+          <span class="truncate font-mono text-sm font-bold tracking-wider">{{ t.codigo }}</span>
           <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold" :class="estado(t).cls">{{ estado(t).label }}</span>
         </div>
         <div class="mt-2 flex items-center gap-3">

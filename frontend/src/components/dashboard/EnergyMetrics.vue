@@ -126,8 +126,8 @@ const fmt = (n: number, d = 2) => n.toLocaleString('pt-BR', { minimumFractionDig
             :style="{ height: `${t.ratio * 100}%`, backgroundColor: t.color, opacity: 0.85 }"
           />
         </div>
-        <span class="text-[9px] text-mute">
-          {{ t.codigo.replace('TR-', '') }}·D{{ t.pino }}
+        <span class="font-mono text-[9px] font-semibold tracking-wider text-mute">
+          {{ t.codigo }}·D{{ t.pino }}
         </span>
       </div>
     </div>

@@ -103,20 +103,12 @@ const abas = computed(() =>
 <template>
   <header class="flex shrink-0 items-center justify-between border-b border-white/5 bg-abyss px-4 py-4 lg:px-6">
     <!-- Marca -->
-    <div class="flex items-center gap-4">
+    <div class="flex items-center">
       <img
-        src="/assets/geonex-symbol.svg"
-        alt="GEONEX"
-        class="h-11 w-auto select-none object-contain sm:h-12"
+        src="/assets/geonex-full.svg"
+        alt="GEONEX - Mining Lighting Control"
+        class="h-12 w-auto select-none object-contain drop-shadow-[0_0_12px_rgba(255,107,0,0.3)] sm:h-14"
       />
-      <div class="flex flex-col justify-center">
-        <h1 class="text-2xl font-black tracking-wider text-ink leading-none">
-          GEONE<span class="text-ore">X</span>
-        </h1>
-        <p class="mt-1 text-[10px] font-semibold tracking-[0.22em] text-neutral-500">
-          MINING LIGHTING CONTROL · MEGA PWM 2–6
-        </p>
-      </div>
     </div>
 
     <!-- Abas em pílula -->
@@ -223,20 +215,23 @@ const abas = computed(() =>
               Deseja realmente encerrar sua sessão atual (<strong class="text-ink">{{ usuarioLogado.nome }}</strong>) e sair do painel GEONEX SCADA?
             </p>
 
-            <div class="mt-5 flex items-center justify-end gap-2">
+            <div class="mt-5 flex items-center justify-end gap-2.5">
               <button
                 type="button"
-                class="rounded-xl border border-line bg-panel-2 px-4 py-2 text-xs font-semibold text-mute transition-colors hover:text-ink"
+                class="btn-secondary btn-sm"
                 @click="mostrarConfirmacaoLogout = false"
               >
-                Cancelar
+                <span>Cancelar</span>
               </button>
               <button
                 type="button"
-                class="rounded-xl bg-fault px-4 py-2 text-xs font-bold text-white transition-opacity hover:opacity-90"
+                class="btn-primary btn-sm !bg-fault !shadow-[0_8px_20px_-4px_rgba(244,63,94,0.45)] hover:!bg-rose-500"
                 @click="confirmarLogout"
               >
-                Sim, sair
+                <span>Sim, sair</span>
+                <svg class="btn-arrow" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6" />
+                </svg>
               </button>
             </div>
           </div>

@@ -316,11 +316,14 @@ async function removerUsuario(u: AuthUser) {
           </div>
           <button
             type="button"
-            class="rounded-xl border border-line bg-panel-2 px-3 py-1.5 text-xs text-mute hover:text-ink"
+            class="btn-secondary btn-sm"
             :disabled="carregando"
             @click="carregarUsuarios"
           >
-            {{ carregando ? 'Sincronizando...' : 'Recarregar Banco' }}
+            <span>{{ carregando ? 'Sincronizando...' : 'Recarregar Banco' }}</span>
+            <svg class="btn-arrow" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6" />
+            </svg>
           </button>
         </div>
 
@@ -372,9 +375,12 @@ async function removerUsuario(u: AuthUser) {
           <button
             type="submit"
             :disabled="salvando"
-            class="rounded-xl bg-ore px-5 py-2 text-xs font-bold text-abyss transition-opacity hover:opacity-90 active:scale-95 disabled:opacity-50"
+            class="btn-primary btn-sm"
           >
-            {{ salvando ? 'Salvando...' : 'Criar usuário' }}
+            <span>{{ salvando ? 'Salvando...' : 'Criar usuário' }}</span>
+            <svg class="btn-arrow" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6" />
+            </svg>
           </button>
         </form>
 
@@ -445,20 +451,23 @@ async function removerUsuario(u: AuthUser) {
               <span>Exigir troca de senha no próximo login (<code class="text-ore">primeiro_acesso = true</code>)</span>
             </label>
 
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2.5">
               <button
                 type="button"
-                class="rounded-xl border border-line px-3.5 py-1.5 text-xs text-mute hover:text-ink"
+                class="btn-secondary btn-sm"
                 @click="cancelarEdicao"
               >
-                Cancelar
+                <span>Cancelar</span>
               </button>
               <button
                 type="submit"
                 :disabled="salvando"
-                class="rounded-xl bg-ore px-4 py-1.5 text-xs font-bold text-abyss hover:opacity-90 disabled:opacity-50"
+                class="btn-primary btn-sm"
               >
-                {{ salvando ? 'Gravando...' : 'Salvar Alterações' }}
+                <span>{{ salvando ? 'Gravando...' : 'Salvar Alterações' }}</span>
+                <svg class="btn-arrow" fill="none" stroke="currentColor" stroke-width="2.25" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6" />
+                </svg>
               </button>
             </div>
           </div>

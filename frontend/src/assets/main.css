@@ -24,8 +24,9 @@
   --color-mode-norm: #d97706;
   --color-mode-cerr: #ea580c;
 
-  --font-sans: 'Inter', 'Geist Sans', 'Plus Jakarta Sans', ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  --font-display: 'Space Grotesk', 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Plus Jakarta Sans', 'Space Grotesk', ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Consolas', 'Cascadia Mono', ui-monospace, monospace;
 
   --animate-beacon: beacon 2s cubic-bezier(0, 0, 0.2, 1) infinite;
   --animate-beacon-fast: beacon 0.9s cubic-bezier(0, 0, 0.2, 1) infinite;
@@ -93,6 +94,45 @@
 
   .scada-card {
     @apply rounded-[20px] border border-white/5 bg-panel shadow-[0_8px_30px_rgb(0,0,0,0.25)];
+  }
+
+  /* ==========================================================================
+     Sistema Padronizado de Botões GEONEX (Ref. Visual Arredondada com Seta)
+     ========================================================================== */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-3 rounded-[22px] bg-[#FF6B00] px-7 py-3.5 font-sans text-sm font-bold tracking-wide text-white shadow-[0_4px_14px_rgba(0,0,0,0.45)] transition-all duration-200 hover:bg-[#FF7E1F] active:bg-[#E05E00] active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF6B00] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100;
+  }
+
+  .btn-primary-ok {
+    @apply inline-flex items-center justify-center gap-3 rounded-[22px] bg-ok px-7 py-3.5 font-sans text-sm font-bold tracking-wide text-abyss shadow-[0_4px_14px_rgba(0,0,0,0.45)] transition-all duration-200 hover:bg-[#4ADE80] active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ok disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100;
+  }
+
+  .btn-tinted {
+    @apply inline-flex items-center justify-center gap-3 rounded-[22px] border border-[#FF6B00]/55 bg-[#FF6B00]/15 px-6 py-3 font-sans text-sm font-semibold tracking-wide text-[#FF7A1A] transition-all duration-200 hover:border-[#FF6B00] hover:bg-[#FF6B00]/25 hover:text-[#FF9447] active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF6B00] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-3 rounded-[22px] border border-white/10 bg-[#262A34] px-6 py-3 font-sans text-sm font-semibold tracking-wide text-ink shadow-sm transition-all duration-200 hover:border-white/20 hover:bg-[#313643] active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/40 disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100;
+  }
+
+  .btn-outline {
+    @apply inline-flex items-center justify-center gap-2.5 rounded-[22px] border border-transparent bg-transparent px-5 py-2.5 font-sans text-sm font-semibold tracking-wide text-[#FF7A1A] transition-all duration-200 hover:border-[#FF6B00]/40 hover:bg-[#FF6B00]/10 hover:text-[#FF9447] active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF6B00] disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-sm {
+    @apply rounded-[18px] px-4 py-2 text-xs gap-2;
+  }
+
+  .btn-arrow {
+    @apply size-4 shrink-0 transition-transform duration-200;
+  }
+
+  .btn-primary:hover .btn-arrow,
+  .btn-primary-ok:hover .btn-arrow,
+  .btn-tinted:hover .btn-arrow,
+  .btn-secondary:hover .btn-arrow,
+  .btn-outline:hover .btn-arrow {
+    @apply translate-x-1;
   }
 
   ::selection {

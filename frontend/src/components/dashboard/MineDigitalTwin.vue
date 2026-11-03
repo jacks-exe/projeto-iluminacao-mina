@@ -161,7 +161,7 @@ function isLightVisible(torre: Torre): boolean {
       >
         <span class="pole-tag">{{ getNumericId(torre, idx) }}</span>
       </div>
-      <span class="pole-pin-badge">D{{ getPinoDigital(torre, idx) }}</span>
+      <span class="pole-pin-badge">{{ torre.codigo || `TR-0${getNumericId(torre, idx)}` }} · D{{ getPinoDigital(torre, idx) }}</span>
     </div>
 
     <!-- Aviso de Conexão Offline (2D) -->
@@ -282,21 +282,24 @@ function isLightVisible(torre: Torre): boolean {
 }
 
 .pole-tag {
+  font-family: var(--font-mono), 'Consolas', monospace;
   font-size: 0.7rem;
   font-weight: bold;
   color: #FFF;
 }
 
 .pole-pin-badge {
-  font-family: monospace;
-  font-size: 9px;
+  font-family: var(--font-mono), 'Consolas', monospace;
+  font-size: 10px;
   font-weight: 700;
+  letter-spacing: 0.04em;
   color: #fbbf24;
-  background: rgba(13, 16, 20, 0.88);
+  background: rgba(13, 16, 20, 0.92);
   border: 1px solid rgba(245, 158, 11, 0.45);
   border-radius: 9999px;
-  padding: 0 6px;
+  padding: 1px 7px;
   line-height: 1.3;
+  white-space: nowrap;
 }
 
 .offline-overlay {

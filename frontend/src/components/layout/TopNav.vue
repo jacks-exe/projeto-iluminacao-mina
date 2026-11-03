@@ -40,16 +40,12 @@ const iniciais = computed(() =>
 <template>
   <div class="flex flex-wrap items-center justify-between gap-4">
     <!-- Marca -->
-    <div class="flex items-center gap-3">
-      <div class="flex size-12 items-center justify-center rounded-2xl bg-[#0F1013] p-2 shadow-md">
-        <img src="/assets/geonex-symbol.svg" alt="GEONEX" class="size-full select-none object-contain" />
-      </div>
-      <div class="leading-tight">
-        <div class="text-base font-black tracking-wider">GEONE<span class="text-ore">X</span></div>
-        <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-neutral-500">
-          Mining Lighting Control
-        </div>
-      </div>
+    <div class="flex items-center">
+      <img
+        src="/assets/geonex-full.svg"
+        alt="GEONEX - Mining Lighting Control"
+        class="h-11 w-auto select-none object-contain drop-shadow-[0_0_12px_rgba(255,107,0,0.3)]"
+      />
     </div>
 
     <!-- Abas em cápsula -->

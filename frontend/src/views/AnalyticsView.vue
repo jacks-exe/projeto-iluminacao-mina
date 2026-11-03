@@ -135,21 +135,42 @@ const kpis = computed(() => {
 const porPoste = computed(() => dados.value?.por_poste ?? [])
 const logs = computed(() => dados.value?.logs_auditoria ?? [])
 
-/* Geometria do Gráfico SVG de Série Temporal de Consumo (W) */
-const SVG_W = 680
-const SVG_H = 190
-const PAD_X = 36
-const PAD_Y = 20
+/* Geometria Dinâmica 1:1 do Gráfico SVG de Série Temporal de Consumo (W) */
+const chartWrapperRef = ref<HTMLDivElement | null>(null)
+const svgW = ref(680)
+const svgH = ref(260)
+const PAD_X = 48
+const PAD_Y = 26
+
+watch(
+  chartWrapperRef,
+  (el, _, onCleanup) => {
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const atualizarDimensoes = () => {
+      const w = Math.round(el.clientWidth)
+      const h = Math.round(el.clientHeight)
+      if (w > 0) svgW.value = w
+      if (h > 0) svgH.value = h
+    }
+    atualizarDimensoes()
+    const ro = new ResizeObserver(atualizarDimensoes)
+    ro.observe(el)
+    onCleanup(() => ro.disconnect())
+  },
+  { immediate: true },
+)
 
 const pontosGrafico = computed(() => {
   const pts = serie.value
   if (!pts.length) return []
+  const w = svgW.value
+  const h = svgH.value
   const maxW = Math.max(2000, ...pts.map((p) => p.consumo_total_w))
   const n = pts.length
   return pts.map((p, i) => {
-    const x = n === 1 ? SVG_W / 2 : PAD_X + (i / (n - 1)) * (SVG_W - PAD_X * 2)
+    const x = n === 1 ? w / 2 : PAD_X + (i / (n - 1)) * (w - PAD_X * 2)
     const ratio = Math.max(0, Math.min(1, p.consumo_total_w / maxW))
-    const y = SVG_H - PAD_Y - ratio * (SVG_H - PAD_Y * 2)
+    const y = h - PAD_Y - ratio * (h - PAD_Y * 2)
     return {
       idx: i,
       x: Math.round(x * 10) / 10,
@@ -169,8 +190,8 @@ const pontoHover = computed(() => {
 const tooltipStyle = computed(() => {
   const pt = pontoHover.value
   if (!pt) return {}
-  const pctX = Math.max(14, Math.min(86, (pt.x / SVG_W) * 100))
-  const pctY = Math.max(8, (pt.y / SVG_H) * 100)
+  const pctX = Math.max(12, Math.min(88, (pt.x / svgW.value) * 100))
+  const pctY = Math.max(12, Math.min(88, (pt.y / svgH.value) * 100))
   return {
     left: `${pctX}%`,
     top: `${pctY}%`,
@@ -182,8 +203,10 @@ function onSvgMouseMove(e: MouseEvent) {
   const pts = pontosGrafico.value
   if (!svg || !pts.length) return
   const rect = svg.getBoundingClientRect()
-  if (!rect.width) return
-  const relX = ((e.clientX - rect.left) / rect.width) * SVG_W
+  if (!rect.width || !rect.height) return
+  if (Math.abs(svgW.value - rect.width) > 1) svgW.value = Math.round(rect.width)
+  if (Math.abs(svgH.value - rect.height) > 1) svgH.value = Math.round(rect.height)
+  const relX = ((e.clientX - rect.left) / rect.width) * svgW.value
   let maisProximo = 0
   let menorDist = Infinity
   for (let i = 0; i < pts.length; i++) {
@@ -207,7 +230,7 @@ const caminhoArea = computed(() => {
   if (!pts.length) return ''
   const primeiro = pts[0]!
   const ultimo = pts[pts.length - 1]!
-  const base = SVG_H - PAD_Y
+  const base = svgH.value - PAD_Y
   return `${caminhoLinha.value} L ${ultimo.x} ${base} L ${primeiro.x} ${base} Z`
 })
 
@@ -307,7 +330,7 @@ function exportarCsv() {
         <div>
           <div class="flex items-center gap-2">
             <span class="size-2.5 rounded-full bg-ore shadow-[0_0_10px_#D97706]" />
-            <h2 class="text-sm font-bold uppercase tracking-wider text-ink">
+            <h2 class="font-display text-sm font-bold uppercase tracking-wider text-ink">
               Analytics de Consumo, Telemetria Avançada & Auditoria Operacional · Passo 4
             </h2>
           </div>
@@ -316,22 +339,28 @@ function exportarCsv() {
           </p>
         </div>
 
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2.5">
           <button
             type="button"
-            class="rounded-xl border border-ore/50 bg-ore/15 px-3 py-1.5 text-[11px] font-semibold text-ore hover:bg-ore/25"
+            class="btn-tinted btn-sm"
             :disabled="!logs.length"
             @click="exportarCsv"
           >
-            Exportar CSV
+            <span>Exportar CSV</span>
+            <svg class="btn-arrow" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6" />
+            </svg>
           </button>
           <button
             type="button"
-            class="rounded-xl border border-line bg-panel px-3 py-1.5 text-[11px] text-mute hover:border-clay hover:text-ink"
+            class="btn-secondary btn-sm"
             :disabled="carregando"
             @click="carregarAnalytics"
           >
-            {{ carregando ? 'Sincronizando...' : 'Atualizar' }}
+            <span>{{ carregando ? 'Sincronizando...' : 'Atualizar' }}</span>
+            <svg class="btn-arrow" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6" />
+            </svg>
           </button>
         </div>
       </header>
@@ -454,27 +483,32 @@ function exportarCsv() {
         </div>
 
         <!-- 2. ABA DE GRÁFICOS E MÉTRICAS POR POSTE (PINOS PWM 2 A 6) -->
-        <div v-if="abaVisualizacao === 'GRAFICOS'" class="grid grid-cols-1 gap-4 lg:grid-cols-12">
+        <div v-if="abaVisualizacao === 'GRAFICOS'" class="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-12">
           <!-- Gráfico de Série Temporal de Consumo (7 colunas) -->
-          <div class="flex flex-col justify-between rounded-2xl border border-line bg-panel-2/50 p-4 lg:col-span-7">
-            <div class="mb-2 flex items-center justify-between">
+          <div class="flex h-full min-h-[380px] flex-col justify-between rounded-2xl border border-line bg-panel-2/50 p-4 lg:col-span-7">
+            <div class="mb-3 flex shrink-0 items-center justify-between">
               <div>
-                <h3 class="text-xs font-bold uppercase tracking-wider text-ink">
+                <h3 class="font-display text-xs font-bold uppercase tracking-wider text-ink">
                   Curva Histórica de Consumo da Planta (Watts)
                 </h3>
                 <p class="text-[11px] text-mute">
                   Evolução da carga dos 5 postes (Capacidade máxima instalada: 2000 W)
                 </p>
               </div>
-              <span class="rounded-lg border border-ore/40 bg-ore/10 px-2 py-0.5 text-[10px] text-ore">
+              <span class="rounded-lg border border-ore/40 bg-ore/10 px-2.5 py-1 font-mono text-[10px] font-bold text-ore">
                 Período: {{ periodoAtivo }}
               </span>
             </div>
 
-            <div class="relative w-full rounded-lg border border-line/60 bg-abyss p-2">
+            <!-- Wrapper e SVG ocupando 100% da largura e altura disponíveis (w-full h-full) sem offset -->
+            <div
+              ref="chartWrapperRef"
+              class="relative h-full min-h-[240px] w-full flex-1 rounded-xl border border-line/60 bg-abyss"
+            >
               <svg
-                :viewBox="`0 0 ${SVG_W} ${SVG_H}`"
-                class="h-48 w-full overflow-visible"
+                :viewBox="`0 0 ${svgW} ${svgH}`"
+                preserveAspectRatio="none"
+                class="block h-full w-full overflow-visible"
                 @mousemove="onSvgMouseMove"
                 @mouseleave="pontoAtivoIdx = null"
               >
@@ -486,27 +520,27 @@ function exportarCsv() {
                 </defs>
 
                 <!-- Linhas de grade horizontais -->
-                <line :x1="PAD_X" :y1="PAD_Y" :x2="SVG_W - PAD_X" :y2="PAD_Y" stroke="#262B31" stroke-dasharray="3 3" />
+                <line :x1="PAD_X" :y1="PAD_Y" :x2="svgW - PAD_X" :y2="PAD_Y" stroke="#262B31" stroke-dasharray="3 3" />
                 <line
                   :x1="PAD_X"
-                  :y1="SVG_H / 2"
-                  :x2="SVG_W - PAD_X"
-                  :y2="SVG_H / 2"
+                  :y1="svgH / 2"
+                  :x2="svgW - PAD_X"
+                  :y2="svgH / 2"
                   stroke="#262B31"
                   stroke-dasharray="3 3"
                 />
                 <line
                   :x1="PAD_X"
-                  :y1="SVG_H - PAD_Y"
-                  :x2="SVG_W - PAD_X"
-                  :y2="SVG_H - PAD_Y"
+                  :y1="svgH - PAD_Y"
+                  :x2="svgW - PAD_X"
+                  :y2="svgH - PAD_Y"
                   stroke="#2E353D"
                 />
 
                 <!-- Rótulos eixo Y -->
-                <text x="4" :y="PAD_Y + 4" fill="#6B7280" font-size="9" font-family="monospace">2000W</text>
-                <text x="4" :y="SVG_H / 2 + 3" fill="#6B7280" font-size="9" font-family="monospace">1000W</text>
-                <text x="14" :y="SVG_H - PAD_Y + 3" fill="#6B7280" font-size="9" font-family="monospace">0W</text>
+                <text x="8" :y="PAD_Y + 4" fill="#6B7280" font-size="10" font-family="JetBrains Mono, Consolas, monospace">2000W</text>
+                <text x="8" :y="svgH / 2 + 3" fill="#6B7280" font-size="10" font-family="JetBrains Mono, Consolas, monospace">1000W</text>
+                <text x="18" :y="svgH - PAD_Y + 3" fill="#6B7280" font-size="10" font-family="JetBrains Mono, Consolas, monospace">0W</text>
 
                 <!-- Linha guia vertical no ponto sob o mouse -->
                 <line
@@ -514,7 +548,7 @@ function exportarCsv() {
                   :x1="pontoHover.x"
                   :y1="PAD_Y"
                   :x2="pontoHover.x"
-                  :y2="SVG_H - PAD_Y"
+                  :y2="svgH - PAD_Y"
                   stroke="#F59E0B"
                   stroke-width="1"
                   stroke-opacity="0.45"
@@ -551,7 +585,7 @@ function exportarCsv() {
                     <circle
                       :cx="pt.x"
                       :cy="pt.y"
-                      r="14"
+                      r="16"
                       fill="transparent"
                       class="cursor-pointer"
                       @mouseenter="pontoAtivoIdx = idx"
@@ -560,11 +594,11 @@ function exportarCsv() {
                     <text
                       v-if="idx === 0 || idx === pontosGrafico.length - 1 || idx % Math.max(1, Math.floor(pontosGrafico.length / 5)) === 0"
                       :x="pt.x"
-                      :y="SVG_H - 4"
+                      :y="svgH - 6"
                       text-anchor="middle"
                       fill="#9CA3AF"
-                      font-size="9"
-                      font-family="monospace"
+                      font-size="10"
+                      font-family="JetBrains Mono, Consolas, monospace"
                     >
                       {{ pt.raw.horario }}
                     </text>
@@ -582,7 +616,7 @@ function exportarCsv() {
                 <div
                   v-if="pontoHover"
                   :style="tooltipStyle"
-                  class="pointer-events-none absolute z-30 w-56 -translate-x-1/2 -translate-y-full -mt-2.5 rounded-xl border border-ore/50 bg-panel/95 p-3 text-[11px] text-ink shadow-2xl shadow-black/80 backdrop-blur-md"
+                  class="pointer-events-none absolute z-30 w-56 -translate-x-1/2 -translate-y-full -mt-3 rounded-xl border border-ore/50 bg-panel/95 p-3 text-[11px] text-ink shadow-2xl shadow-black/80 backdrop-blur-md"
                 >
                   <div class="mb-1.5 flex items-center justify-between border-b border-line pb-1">
                     <span class="font-mono font-bold text-ore">{{ pontoHover.raw.horario }}</span>
@@ -607,7 +641,7 @@ function exportarCsv() {
             </div>
 
             <!-- Resumo rápido sob o gráfico -->
-            <div class="mt-3 grid grid-cols-3 gap-2 text-center font-mono text-[11px]">
+            <div class="mt-3 grid shrink-0 grid-cols-3 gap-2 text-center font-mono text-[11px]">
               <div class="rounded-lg border border-line bg-abyss/60 py-1.5">
                 <span class="block text-[9px] uppercase text-mute">Capacidade Nominal</span>
                 <strong class="text-ink">2.00 kW (5x 400W)</strong>
