@@ -13,7 +13,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'select-node', id: number): void
+  (e: 'select-node', id: number | null): void
   (e: 'maintenance', torre: Torre): void
   (e: 'toggle-power', torre: Torre): void
 }>()
